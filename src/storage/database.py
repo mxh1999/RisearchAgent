@@ -6,12 +6,13 @@ from pathlib import Path
 import aiosqlite
 
 from src.models import (
-    BenchmarkResult,
     ContributionDelta,
     DeepReading,
+    ExperimentEntry,
+    ExperimentTable,
+    MethodResult,
     Paper,
     RelevanceVerdict,
-    SOTAEntry,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,23 +48,19 @@ CREATE TABLE IF NOT EXISTS deep_readings (
     main_results TEXT NOT NULL,
     limitations TEXT NOT NULL,
     comparison_to_prior_work TEXT NOT NULL,
-    extracted_benchmarks TEXT NOT NULL DEFAULT '[]',
+    experiment_table TEXT NOT NULL DEFAULT '{}',
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (arxiv_id) REFERENCES papers(arxiv_id)
 );
 
-CREATE TABLE IF NOT EXISTS sota_entries (
+CREATE TABLE IF NOT EXISTS sota_updates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    field TEXT NOT NULL,
+    arxiv_id TEXT NOT NULL,
     benchmark TEXT NOT NULL,
-    metric TEXT NOT NULL,
-    best_value REAL NOT NULL,
-    best_method TEXT NOT NULL,
-    best_paper_id TEXT NOT NULL,
-    previous_best_value REAL,
-    previous_best_method TEXT,
-    updated_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(field, benchmark, metric)
+    action TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (arxiv_id) REFERENCES papers(arxiv_id)
 );
 
 CREATE TABLE IF NOT EXISTS contribution_deltas (
@@ -89,7 +86,12 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 CREATE INDEX IF NOT EXISTS idx_papers_published ON papers(published);
 CREATE INDEX IF NOT EXISTS idx_papers_topic ON papers(source_topic);
 CREATE INDEX IF NOT EXISTS idx_verdicts_score ON relevance_verdicts(score);
-CREATE INDEX IF NOT EXISTS idx_sota_field ON sota_entries(field, benchmark);
+CREATE INDEX IF NOT EXISTS idx_sota_updates_arxiv ON sota_updates(arxiv_id);
+"""
+
+_MIGRATION_SQL = """
+-- Migration: rename extracted_benchmarks -> experiment_table if old schema exists
+-- This is handled programmatically in _migrate_schema()
 """
 
 
@@ -100,8 +102,36 @@ class Database:
 
     async def initialize(self) -> None:
         async with aiosqlite.connect(self.db_path) as db:
+            await self._migrate_schema(db)
             await db.executescript(_SCHEMA)
             await db.commit()
+
+    async def _migrate_schema(self, db: aiosqlite.Connection) -> None:
+        """Handle schema migrations from old versions."""
+        try:
+            # Check if deep_readings table exists with old schema
+            cursor = await db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='deep_readings'"
+            )
+            row = await cursor.fetchone()
+            if row and "extracted_benchmarks" in row[0]:
+                logger.info("Migrating deep_readings: extracted_benchmarks -> experiment_table")
+                await db.execute(
+                    "ALTER TABLE deep_readings RENAME COLUMN extracted_benchmarks TO experiment_table"
+                )
+                await db.commit()
+
+            # Drop old sota_entries table if it exists
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sota_entries'"
+            )
+            if await cursor.fetchone():
+                logger.info("Dropping old sota_entries table (SOTA data now in markdown)")
+                await db.execute("DROP TABLE sota_entries")
+                await db.commit()
+        except Exception as e:
+            # Table might not exist yet on first run
+            logger.debug(f"Migration check: {e}")
 
     # ── Papers ────────────────────────────────────────────
 
@@ -189,22 +219,13 @@ class Database:
     # ── Deep Readings ─────────────────────────────────────
 
     async def upsert_deep_reading(self, reading: DeepReading) -> None:
-        benchmarks = [
-            {
-                "benchmark_name": b.benchmark_name,
-                "metric_name": b.metric_name,
-                "value": b.value,
-                "unit": b.unit,
-                "is_sota": b.is_sota,
-            }
-            for b in reading.extracted_benchmarks
-        ]
+        experiment_table = self._serialize_experiment_table(reading.experiment_table)
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """INSERT INTO deep_readings
                    (arxiv_id, problem_statement, proposed_method, key_contributions,
                     experimental_setup, main_results, limitations,
-                    comparison_to_prior_work, extracted_benchmarks)
+                    comparison_to_prior_work, experiment_table)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(arxiv_id) DO UPDATE SET
                        problem_statement=excluded.problem_statement,
@@ -214,13 +235,13 @@ class Database:
                        main_results=excluded.main_results,
                        limitations=excluded.limitations,
                        comparison_to_prior_work=excluded.comparison_to_prior_work,
-                       extracted_benchmarks=excluded.extracted_benchmarks""",
+                       experiment_table=excluded.experiment_table""",
                 (
                     reading.arxiv_id, reading.problem_statement,
                     reading.proposed_method, json.dumps(reading.key_contributions),
                     reading.experimental_setup, reading.main_results,
                     reading.limitations, reading.comparison_to_prior_work,
-                    json.dumps(benchmarks),
+                    json.dumps(experiment_table),
                 ),
             )
             await db.commit()
@@ -233,7 +254,7 @@ class Database:
                 row = await cursor.fetchone()
                 if not row:
                     return None
-                benchmarks_raw = json.loads(row[8])
+                experiment_raw = json.loads(row[8])
                 return DeepReading(
                     arxiv_id=row[0],
                     problem_statement=row[1],
@@ -243,67 +264,78 @@ class Database:
                     main_results=row[5],
                     limitations=row[6],
                     comparison_to_prior_work=row[7],
-                    extracted_benchmarks=[
-                        BenchmarkResult(**b) for b in benchmarks_raw
+                    experiment_table=self._deserialize_experiment_table(
+                        row[0], experiment_raw
+                    ),
+                )
+
+    def _serialize_experiment_table(self, table: ExperimentTable | None) -> dict:
+        """Convert ExperimentTable to JSON-serializable dict."""
+        if table is None:
+            return {}
+        return {
+            "arxiv_id": table.arxiv_id,
+            "entries": [
+                {
+                    "benchmark": e.benchmark,
+                    "setting": e.setting,
+                    "metric": e.metric,
+                    "higher_is_better": e.higher_is_better,
+                    "results": [
+                        {
+                            "method_name": r.method_name,
+                            "value": r.value,
+                            "is_paper_method": r.is_paper_method,
+                        }
+                        for r in e.results
                     ],
+                }
+                for e in table.entries
+            ],
+            "details": table.details,
+        }
+
+    def _deserialize_experiment_table(
+        self, arxiv_id: str, raw: dict
+    ) -> ExperimentTable | None:
+        """Convert JSON dict back to ExperimentTable."""
+        if not raw or not raw.get("entries"):
+            return None
+        entries = []
+        for e in raw["entries"]:
+            results = [
+                MethodResult(
+                    method_name=r["method_name"],
+                    value=r["value"],
+                    is_paper_method=r["is_paper_method"],
                 )
+                for r in e.get("results", [])
+            ]
+            entries.append(ExperimentEntry(
+                benchmark=e["benchmark"],
+                setting=e.get("setting", "default"),
+                metric=e["metric"],
+                higher_is_better=e.get("higher_is_better", True),
+                results=results,
+            ))
+        return ExperimentTable(
+            arxiv_id=raw.get("arxiv_id", arxiv_id),
+            entries=entries,
+            details=raw.get("details", ""),
+        )
 
-    # ── SOTA Entries ──────────────────────────────────────
+    # ── SOTA Updates (audit log) ──────────────────────────
 
-    async def get_sota_entry(self, field: str, benchmark: str, metric: str) -> SOTAEntry | None:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                """SELECT field, benchmark, metric, best_value, best_method,
-                          best_paper_id, previous_best_value, previous_best_method
-                   FROM sota_entries WHERE field=? AND benchmark=? AND metric=?""",
-                (field, benchmark, metric),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if not row:
-                    return None
-                return SOTAEntry(
-                    field=row[0], benchmark=row[1], metric=row[2],
-                    best_value=row[3], best_method=row[4], best_paper_id=row[5],
-                    previous_best_value=row[6], previous_best_method=row[7],
-                )
-
-    async def upsert_sota_entry(self, entry: SOTAEntry) -> None:
+    async def log_sota_update(
+        self, arxiv_id: str, benchmark: str, action: str, summary: str
+    ) -> None:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                """INSERT INTO sota_entries
-                   (field, benchmark, metric, best_value, best_method,
-                    best_paper_id, previous_best_value, previous_best_method)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(field, benchmark, metric) DO UPDATE SET
-                       best_value=excluded.best_value,
-                       best_method=excluded.best_method,
-                       best_paper_id=excluded.best_paper_id,
-                       previous_best_value=excluded.previous_best_value,
-                       previous_best_method=excluded.previous_best_method,
-                       updated_at=datetime('now')""",
-                (
-                    entry.field, entry.benchmark, entry.metric,
-                    entry.best_value, entry.best_method, entry.best_paper_id,
-                    entry.previous_best_value, entry.previous_best_method,
-                ),
+                """INSERT INTO sota_updates (arxiv_id, benchmark, action, summary)
+                   VALUES (?, ?, ?, ?)""",
+                (arxiv_id, benchmark, action, summary),
             )
             await db.commit()
-
-    async def get_all_sota_entries(self) -> list[SOTAEntry]:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                """SELECT field, benchmark, metric, best_value, best_method,
-                          best_paper_id, previous_best_value, previous_best_method
-                   FROM sota_entries ORDER BY field, benchmark"""
-            ) as cursor:
-                return [
-                    SOTAEntry(
-                        field=row[0], benchmark=row[1], metric=row[2],
-                        best_value=row[3], best_method=row[4], best_paper_id=row[5],
-                        previous_best_value=row[6], previous_best_method=row[7],
-                    )
-                    async for row in cursor
-                ]
 
     # ── Contribution Deltas ───────────────────────────────
 
@@ -363,12 +395,12 @@ class Database:
             total = (await (await db.execute("SELECT COUNT(*) FROM papers")).fetchone())[0]
             filtered = (await (await db.execute("SELECT COUNT(*) FROM relevance_verdicts")).fetchone())[0]
             read = (await (await db.execute("SELECT COUNT(*) FROM deep_readings")).fetchone())[0]
-            sota = (await (await db.execute("SELECT COUNT(*) FROM sota_entries")).fetchone())[0]
+            sota = (await (await db.execute("SELECT COUNT(*) FROM sota_updates")).fetchone())[0]
             return {
                 "total_papers": total,
                 "filtered": filtered,
                 "deep_read": read,
-                "sota_entries": sota,
+                "sota_updates": sota,
             }
 
 

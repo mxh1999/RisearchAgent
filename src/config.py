@@ -40,6 +40,7 @@ class AppConfig:
     db_path: Path
     chroma_path: Path
     pdf_dir: Path
+    sota_dir: Path
 
 
 def load_config(config_path: str = "config.yaml") -> AppConfig:
@@ -90,4 +91,5 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
         db_path=Path(raw.get("db_path", "data/papers.db")),
         chroma_path=Path(raw.get("chroma_path", "data/chroma")),
         pdf_dir=Path(raw.get("pdf_dir", "data/pdfs")),
+        sota_dir=Path(raw.get("sota_dir", "data/sota")),
     )

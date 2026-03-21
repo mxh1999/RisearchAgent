@@ -64,11 +64,14 @@ async def cmd_read(config, arxiv_id: str):
     print(f"\nLimitations: {reading.limitations}")
     print(f"\nComparison to Prior Work: {reading.comparison_to_prior_work}")
 
-    if reading.extracted_benchmarks:
-        print(f"\nBenchmarks:")
-        for b in reading.extracted_benchmarks:
-            sota_tag = " [SOTA]" if b.is_sota else ""
-            print(f"  - {b.benchmark_name} / {b.metric_name}: {b.value}{b.unit}{sota_tag}")
+    if reading.experiment_table and reading.experiment_table.entries:
+        print(f"\nExperiment Results:")
+        for entry in reading.experiment_table.entries:
+            arrow = "↑" if entry.higher_is_better else "↓"
+            print(f"  {entry.benchmark} / {entry.setting} / {entry.metric}{arrow}:")
+            for r in entry.results:
+                tag = " [paper]" if r.is_paper_method else ""
+                print(f"    {r.method_name}: {r.value}{tag}")
 
     if delta:
         print(f"\n{'='*60}")
@@ -87,8 +90,10 @@ async def cmd_read(config, arxiv_id: str):
             for c in delta.contradicts_prior:
                 print(f"  ! {c}")
 
-    if result["sota_updates"]:
-        print(f"\nSOTA Updates: {len(result['sota_updates'])} new records")
+    if result.get("sota_report") and result["sota_report"].actions:
+        print(f"\nSOTA Updates: {len(result['sota_report'].actions)} benchmarks updated")
+        for action in result["sota_report"].actions:
+            print(f"  [{action.action}] {action.summary}")
 
 
 async def cmd_pipeline(config):
@@ -103,25 +108,20 @@ async def cmd_pipeline(config):
 
 
 async def cmd_sota(config):
-    """Display SOTA tracking table."""
-    from src.storage.database import Database
+    """Display SOTA knowledge base (markdown files)."""
+    from src.knowledge.sota_tracker import SOTAKnowledgeBase
 
-    db = Database(config.db_path)
-    await db.initialize()
-    entries = await db.get_all_sota_entries()
+    sota_kb = SOTAKnowledgeBase(config.sota_dir, llm=None, llm_config=None)
+    benchmarks = sota_kb.get_all_benchmarks()
 
-    if not entries:
-        print("No SOTA entries yet. Run the pipeline first.")
+    if not benchmarks:
+        print("No SOTA data yet. Run the pipeline first.")
         return
 
-    print(f"\n{'Field':<20} {'Benchmark':<25} {'Metric':<15} {'Best':<10} {'Method':<30} {'Paper'}")
-    print("-" * 110)
-    for e in entries:
-        prev = f" (prev: {e.previous_best_value})" if e.previous_best_value else ""
-        print(
-            f"{e.field:<20} {e.benchmark:<25} {e.metric:<15} "
-            f"{e.best_value:<10.2f} {e.best_method:<30} {e.best_paper_id}{prev}"
-        )
+    for name, content in benchmarks:
+        print(f"\n{'='*60}")
+        print(content)
+        print()
 
 
 async def cmd_stats(config):
@@ -136,7 +136,7 @@ async def cmd_stats(config):
     print(f"  Total papers:     {stats['total_papers']}")
     print(f"  Filtered:         {stats['filtered']}")
     print(f"  Deep read:        {stats['deep_read']}")
-    print(f"  SOTA entries:     {stats['sota_entries']}")
+    print(f"  SOTA updates:     {stats['sota_updates']}")
 
 
 def main():

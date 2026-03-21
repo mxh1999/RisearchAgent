@@ -3,7 +3,7 @@ from typing import Optional
 
 from src.config import LLMConfig
 from src.llm.gemini_client import GeminiClient
-from src.models import BenchmarkResult, DeepReading
+from src.models import DeepReading, ExperimentEntry, ExperimentTable, MethodResult
 from src.reader.section_parser import get_section_for_pass, parse_sections
 
 logger = logging.getLogger(__name__)
@@ -24,32 +24,53 @@ Respond in JSON:
     "key_contributions": ["<contribution 1>", "<contribution 2>", ...]
 }}"""
 
-PASS2_PROMPT = """You are a senior research scientist performing a deep reading of an academic paper.
+PASS2_PROMPT = """You are a senior research scientist extracting experimental results from an academic paper.
 
-## Task: Analyze the Experiments and Results sections
+## Task: Extract ALL quantitative results from the Experiments and Results sections
 
 Paper title: {title}
 
 Text:
 {text}
 
+You must extract TWO layers of information:
+
+### Layer 1: Structured results (entries)
+Extract ALL methods (both the paper's proposed method AND baselines) with their scores on each benchmark+setting+metric combination.
+
+### Layer 2: Detailed experiment description (details)
+A thorough free-text description covering:
+- Training data and pretrained models used
+- Evaluation split and number of episodes/samples
+- Special settings (zero-shot vs trained, oracle stop vs learned stop, etc.)
+- How baselines were obtained (official numbers vs reproduced)
+- Any discussion of data discrepancies or differences in evaluation protocol
+
 Respond in JSON:
 {{
-    "experimental_setup": "<Datasets, environments, baselines, metrics used. 2-4 sentences>",
+    "experimental_setup": "<Brief overview of experimental setup. 2-4 sentences>",
     "main_results": "<Key quantitative findings and comparisons. 3-5 sentences>",
-    "extracted_benchmarks": [
+    "entries": [
         {{
-            "benchmark_name": "<name>",
-            "metric_name": "<metric>",
-            "value": <float>,
-            "unit": "<unit like % or score>",
-            "is_sota": <true/false>
+            "benchmark": "<benchmark name, e.g. HM3D ObjectNav>",
+            "setting": "<specific setting, e.g. zero-shot val unseen>",
+            "metric": "<metric name, e.g. SR, SPL, mAP>",
+            "higher_is_better": true,
+            "results": [
+                {{"method": "<method name>", "value": <float>, "is_paper_method": true}},
+                {{"method": "<baseline name>", "value": <float>, "is_paper_method": false}}
+            ]
         }}
-    ]
+    ],
+    "details": "<Detailed experiment description as described above. Be thorough.>"
 }}
 
-For extracted_benchmarks, only include results that are clearly reported as the paper's own method's performance.
-If no clear benchmark results are found, return an empty list."""
+Guidelines:
+- Include ALL methods from comparison tables, not just the paper's own method
+- Each unique (benchmark, setting, metric) combination should be a separate entry
+- Set higher_is_better=false for error metrics, loss, collision rate, etc.
+- If the setting is not clearly specified, use "default"
+- If no clear benchmark results are found, return an empty entries list"""
 
 PASS3_PROMPT = """You are a senior research scientist performing a deep reading of an academic paper.
 
@@ -100,16 +121,10 @@ class DeepReader:
                 model=self.config.reader_model,
             )
 
-            benchmarks = [
-                BenchmarkResult(
-                    benchmark_name=b["benchmark_name"],
-                    metric_name=b["metric_name"],
-                    value=float(b["value"]),
-                    unit=b.get("unit", ""),
-                    is_sota=b.get("is_sota", False),
-                )
-                for b in pass2.get("extracted_benchmarks", [])
-            ]
+            # Build ExperimentTable from Pass 2
+            experiment_table = self._parse_experiment_table(
+                arxiv_id, pass2
+            )
 
             return DeepReading(
                 arxiv_id=arxiv_id,
@@ -120,9 +135,43 @@ class DeepReader:
                 main_results=pass2["main_results"],
                 limitations=pass3["limitations"],
                 comparison_to_prior_work=pass3["comparison_to_prior_work"],
-                extracted_benchmarks=benchmarks,
+                experiment_table=experiment_table,
             )
 
         except Exception as e:
             logger.error(f"Deep reading failed for {arxiv_id}: {e}")
             return None
+
+    def _parse_experiment_table(
+        self, arxiv_id: str, pass2: dict
+    ) -> Optional[ExperimentTable]:
+        """Parse Pass 2 JSON into ExperimentTable."""
+        raw_entries = pass2.get("entries", [])
+        if not raw_entries:
+            return None
+
+        entries = []
+        for raw in raw_entries:
+            results = [
+                MethodResult(
+                    method_name=r["method"],
+                    value=float(r["value"]),
+                    is_paper_method=r.get("is_paper_method", False),
+                )
+                for r in raw.get("results", [])
+            ]
+            entries.append(
+                ExperimentEntry(
+                    benchmark=raw["benchmark"],
+                    setting=raw.get("setting", "default"),
+                    metric=raw["metric"],
+                    higher_is_better=raw.get("higher_is_better", True),
+                    results=results,
+                )
+            )
+
+        return ExperimentTable(
+            arxiv_id=arxiv_id,
+            entries=entries,
+            details=pass2.get("details", ""),
+        )

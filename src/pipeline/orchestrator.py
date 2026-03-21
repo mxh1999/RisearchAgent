@@ -6,7 +6,7 @@ from src.crawl.scraper import ArxivScraper
 from src.filter.relevance_judge import RelevanceJudge
 from src.knowledge.contribution_analyzer import ContributionAnalyzer
 from src.knowledge.knowledge_base import KnowledgeBase
-from src.knowledge.sota_tracker import SOTATracker
+from src.knowledge.sota_tracker import SOTAKnowledgeBase
 from src.llm.gemini_client import GeminiClient
 from src.reader.deep_reader import DeepReader
 from src.storage.database import Database
@@ -26,7 +26,7 @@ class PipelineOrchestrator:
         self.judge = RelevanceJudge(self.llm, config.llm)
         self.reader = DeepReader(self.llm, config.llm)
         self.kb = KnowledgeBase(config.chroma_path, self.llm)
-        self.sota_tracker = SOTATracker(self.db)
+        self.sota_kb = SOTAKnowledgeBase(config.sota_dir, self.llm, config.llm)
         self.analyzer = ContributionAnalyzer(self.llm, config.llm, self.kb)
 
     async def run_all(self) -> dict:
@@ -166,14 +166,19 @@ class PipelineOrchestrator:
                     f"  [{delta.overall_significance.upper()}] {paper.title[:50]}..."
                 )
 
-            # Stage 5: SOTA update
-            if reading.extracted_benchmarks:
-                updated = await self.sota_tracker.update_from_benchmarks(
-                    arxiv_id, reading.proposed_method[:100],
-                    reading.extracted_benchmarks,
-                    field=paper.source_topic,
+            # Stage 5: SOTA update via markdown knowledge base
+            if reading.experiment_table and reading.experiment_table.entries:
+                report = await self.sota_kb.update_from_experiment(
+                    arxiv_id, paper.title, reading.experiment_table,
                 )
-                sota_count += len(updated)
+                sota_count += len(report.actions)
+
+                # Log to database audit trail
+                for action in report.actions:
+                    await self.db.log_sota_update(
+                        arxiv_id, action.benchmark,
+                        action.action, action.summary,
+                    )
 
             # Store in knowledge base
             await self.kb.store_reading(
@@ -209,13 +214,16 @@ class PipelineOrchestrator:
             await self.db.upsert_contribution_delta(delta)
 
         # SOTA update
-        sota_updated = []
-        if reading.extracted_benchmarks:
-            sota_updated = await self.sota_tracker.update_from_benchmarks(
-                arxiv_id, reading.proposed_method[:100],
-                reading.extracted_benchmarks,
-                field=paper.source_topic,
+        sota_report = None
+        if reading.experiment_table and reading.experiment_table.entries:
+            sota_report = await self.sota_kb.update_from_experiment(
+                arxiv_id, paper.title, reading.experiment_table,
             )
+            for action in sota_report.actions:
+                await self.db.log_sota_update(
+                    arxiv_id, action.benchmark,
+                    action.action, action.summary,
+                )
 
         # Store knowledge
         await self.kb.store_reading(
@@ -226,5 +234,5 @@ class PipelineOrchestrator:
         return {
             "reading": reading,
             "contribution": delta,
-            "sota_updates": sota_updated,
+            "sota_report": sota_report,
         }

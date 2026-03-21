@@ -35,13 +35,29 @@ class RelevanceVerdict:
 
 
 @dataclass
-class BenchmarkResult:
-    """A single benchmark result extracted from a paper."""
-    benchmark_name: str
-    metric_name: str
+class MethodResult:
+    """A single method's score on one benchmark+setting+metric."""
+    method_name: str
     value: float
-    unit: str
-    is_sota: bool = False
+    is_paper_method: bool  # True = proposed method, False = baseline
+
+
+@dataclass
+class ExperimentEntry:
+    """All methods' results for one benchmark+setting+metric combination."""
+    benchmark: str        # e.g. "HM3D ObjectNav"
+    setting: str          # e.g. "zero-shot, val unseen"
+    metric: str           # e.g. "SR", "SPL"
+    higher_is_better: bool
+    results: list[MethodResult] = field(default_factory=list)
+
+
+@dataclass
+class ExperimentTable:
+    """Complete experiment results extracted from a paper."""
+    arxiv_id: str
+    entries: list[ExperimentEntry] = field(default_factory=list)
+    details: str = ""  # Detailed experiment description (settings, training config, eval protocol, etc.)
 
 
 @dataclass
@@ -55,20 +71,34 @@ class DeepReading:
     main_results: str
     limitations: str
     comparison_to_prior_work: str
-    extracted_benchmarks: list[BenchmarkResult] = field(default_factory=list)
+    experiment_table: Optional[ExperimentTable] = None
 
 
 @dataclass
-class SOTAEntry:
-    """State-of-the-art tracking entry."""
-    field: str
-    benchmark: str
+class SOTAConflict:
+    """A conflict between paper-reported and existing SOTA values."""
+    method: str
     metric: str
-    best_value: float
-    best_method: str
-    best_paper_id: str
-    previous_best_value: Optional[float] = None
-    previous_best_method: Optional[str] = None
+    paper_value: float
+    existing_value: float
+    paper_source: str  # arxiv_id that reported existing_value
+
+
+@dataclass
+class SOTAUpdateAction:
+    """A single action taken during SOTA update."""
+    benchmark: str
+    action: str  # "new_entry" | "updated" | "conflict_resolved"
+    summary: str
+
+
+@dataclass
+class SOTAUpdateReport:
+    """Report from processing one paper's experiment results."""
+    arxiv_id: str
+    actions: list[SOTAUpdateAction] = field(default_factory=list)
+    conflicts_found: int = 0
+    conflicts_resolved: int = 0
 
 
 @dataclass
