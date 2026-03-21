@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paper Reader Agent - CLI entry point."""
+"""RisearchAgent - CLI entry point."""
 
 import argparse
 import asyncio
@@ -256,7 +256,7 @@ async def cmd_stats(config):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Paper Reader Agent - ArXiv paper analysis pipeline"
+        description="RisearchAgent - ArXiv paper analysis pipeline"
     )
     parser.add_argument(
         "-c", "--config", default="config.yaml", help="Config file path"
