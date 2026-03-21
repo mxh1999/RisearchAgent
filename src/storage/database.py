@@ -171,6 +171,11 @@ class Database:
             ) as cursor:
                 return [_row_to_paper(row) async for row in cursor]
 
+    async def get_all_papers(self) -> list[Paper]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT * FROM papers ORDER BY published DESC") as cursor:
+                return [_row_to_paper(row) async for row in cursor]
+
     async def get_unfiltered_paper_ids(self) -> list[str]:
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
@@ -215,6 +220,19 @@ class Database:
                 ),
             )
             await db.commit()
+
+    async def get_all_verdicts(self) -> list[RelevanceVerdict]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT * FROM relevance_verdicts") as cursor:
+                return [
+                    RelevanceVerdict(
+                        arxiv_id=row[0],
+                        score=row[1],
+                        justification=row[2],
+                        key_topics=json.loads(row[3]),
+                    )
+                    async for row in cursor
+                ]
 
     # ── Deep Readings ─────────────────────────────────────
 
@@ -324,6 +342,27 @@ class Database:
             details=raw.get("details", ""),
         )
 
+    async def get_all_deep_readings(self) -> list[DeepReading]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT * FROM deep_readings") as cursor:
+                results = []
+                async for row in cursor:
+                    experiment_raw = json.loads(row[8])
+                    results.append(DeepReading(
+                        arxiv_id=row[0],
+                        problem_statement=row[1],
+                        proposed_method=row[2],
+                        key_contributions=json.loads(row[3]),
+                        experimental_setup=row[4],
+                        main_results=row[5],
+                        limitations=row[6],
+                        comparison_to_prior_work=row[7],
+                        experiment_table=self._deserialize_experiment_table(
+                            row[0], experiment_raw
+                        ),
+                    ))
+                return results
+
     # ── SOTA Updates (audit log) ──────────────────────────
 
     async def log_sota_update(
@@ -360,6 +399,20 @@ class Database:
                 ),
             )
             await db.commit()
+
+    async def get_all_contribution_deltas(self) -> list[ContributionDelta]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT * FROM contribution_deltas") as cursor:
+                return [
+                    ContributionDelta(
+                        arxiv_id=row[0],
+                        novel_contributions=json.loads(row[1]),
+                        incremental_improvements=json.loads(row[2]),
+                        contradicts_prior=json.loads(row[3]),
+                        overall_significance=row[4],
+                    )
+                    async for row in cursor
+                ]
 
     # ── Pipeline Runs ─────────────────────────────────────
 

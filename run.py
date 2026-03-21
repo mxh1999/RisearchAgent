@@ -193,6 +193,52 @@ def cmd_onboard(args):
     advisor.run()
 
 
+async def cmd_export(config, output_path: str):
+    """Export knowledge data to JSON."""
+    from src.storage.database import Database
+    from src.storage.exporter import export_knowledge
+
+    db = Database(config.db_path)
+    await db.initialize()
+    data = await export_knowledge(db, "config.yaml", config.sota_dir)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        import json
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    print(f"\nExported knowledge to {output_path}")
+    print(f"  Papers:              {len(data['papers'])}")
+    print(f"  Relevance verdicts:  {len(data['relevance_verdicts'])}")
+    print(f"  Deep readings:       {len(data['deep_readings'])}")
+    print(f"  Contribution deltas: {len(data['contribution_deltas'])}")
+    print(f"  SOTA tables:         {len(data['sota_tables'])}")
+
+
+async def cmd_import(config, input_path: str, merge: bool):
+    """Import knowledge data from JSON."""
+    import json
+
+    from src.storage.database import Database
+    from src.storage.exporter import import_knowledge
+
+    with open(input_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    db = Database(config.db_path)
+    await db.initialize()
+
+    mode = "merge (upsert)" if merge else "replace"
+    print(f"\nImporting from {input_path} (mode: {mode})...")
+    summary = await import_knowledge(db, data, config.sota_dir, merge=merge)
+
+    print(f"\nImport complete:")
+    print(f"  Papers:              {summary['papers']}")
+    print(f"  Relevance verdicts:  {summary['verdicts']}")
+    print(f"  Deep readings:       {summary['deep_readings']}")
+    print(f"  Contribution deltas: {summary['contribution_deltas']}")
+    print(f"  SOTA files:          {summary['sota_files']}")
+
+
 async def cmd_stats(config):
     """Show database statistics."""
     from src.storage.database import Database
@@ -229,6 +275,19 @@ def main():
     subparsers.add_parser("sota", help="Show SOTA tracking table")
     subparsers.add_parser("stats", help="Show database statistics")
 
+    export_parser = subparsers.add_parser("export", help="Export knowledge data to JSON")
+    export_parser.add_argument(
+        "output", nargs="?", default="knowledge_export.json",
+        help="Output file path (default: knowledge_export.json)",
+    )
+
+    import_parser = subparsers.add_parser("import", help="Import knowledge data from JSON")
+    import_parser.add_argument("input", help="Input JSON file path")
+    import_parser.add_argument(
+        "--merge", action="store_true",
+        help="Merge with existing data (upsert) instead of replacing",
+    )
+
     onboard_parser = subparsers.add_parser(
         "onboard", help="Interactive onboarding: set up research profile"
     )
@@ -257,6 +316,8 @@ def main():
         "pipeline": lambda: cmd_pipeline(config),
         "sota": lambda: cmd_sota(config),
         "stats": lambda: cmd_stats(config),
+        "export": lambda: cmd_export(config, args.output),
+        "import": lambda: cmd_import(config, args.input, args.merge),
     }
 
     asyncio.run(commands[args.command]())
