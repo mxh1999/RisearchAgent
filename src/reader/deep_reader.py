@@ -4,7 +4,7 @@ from typing import Optional
 from src.config import LLMConfig
 from src.llm.gemini_client import GeminiClient
 from src.models import DeepReading, ExperimentEntry, ExperimentTable, MethodResult
-from src.reader.section_parser import get_section_for_pass, parse_sections
+from src.reader.section_parser import LLMSectionParser, get_section_for_pass
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +92,14 @@ class DeepReader:
     def __init__(self, llm: GeminiClient, config: LLMConfig):
         self.llm = llm
         self.config = config
+        self.section_parser = LLMSectionParser(llm, config)
 
     async def read_paper(
         self, arxiv_id: str, title: str, full_text: str
     ) -> Optional[DeepReading]:
         """Perform three-pass deep reading of a paper."""
         try:
-            sections = parse_sections(full_text)
+            sections = await self.section_parser.parse_sections(full_text)
 
             # Pass 1: Method + Introduction
             text1 = get_section_for_pass(sections, "method_intro")

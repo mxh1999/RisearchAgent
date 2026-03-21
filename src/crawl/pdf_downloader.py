@@ -38,11 +38,15 @@ class PDFDownloader:
         return await asyncio.to_thread(self._extract_text_sync, path)
 
     @staticmethod
-    def _extract_text_sync(path: Path) -> str:
-        """Extract text from PDF using PyMuPDF."""
+    def _extract_text_sync(path: Path, max_pages: int = 20) -> str:
+        """Extract text from PDF using PyMuPDF (first max_pages pages only)."""
         doc = fitz.open(path)
+        total = len(doc)
+        pages_to_read = min(total, max_pages)
+        if total > max_pages:
+            logger.info(f"PDF has {total} pages, truncating to first {max_pages}")
         text_parts = []
-        for page in doc:
-            text_parts.append(page.get_text())
+        for i in range(pages_to_read):
+            text_parts.append(doc[i].get_text())
         doc.close()
         return "\n".join(text_parts)
