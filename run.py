@@ -124,6 +124,75 @@ async def cmd_sota(config):
         print()
 
 
+def cmd_onboard(args):
+    """Interactive onboarding: set up research profile via conversation."""
+    import os
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    from src.config import LLMConfig
+    from src.onboard.advisor import ResearchAdvisor
+
+    load_dotenv()
+
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        print("Error: GEMINI_API_KEY environment variable not set.")
+        sys.exit(1)
+
+    # Minimal config - only need LLM settings for onboarding
+    config_path = args.config
+    llm_config = LLMConfig(
+        filter_model="gemini-2.5-flash",
+        reader_model="gemini-2.5-pro",
+        embedding_model="gemini-embedding-001",
+        api_key=api_key,
+        max_concurrent=5,
+        temperature=0.3,
+    )
+
+    # If config.yaml exists, load LLM settings from it
+    config_file = Path(config_path)
+    if config_file.exists():
+        import yaml
+
+        with open(config_file, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        llm_raw = raw.get("llm", {})
+        llm_config = LLMConfig(
+            filter_model=llm_raw.get("filter_model", llm_config.filter_model),
+            reader_model=llm_raw.get("reader_model", llm_config.reader_model),
+            embedding_model=llm_raw.get("embedding_model", llm_config.embedding_model),
+            api_key=api_key,
+            max_concurrent=llm_raw.get("max_concurrent", llm_config.max_concurrent),
+            temperature=llm_raw.get("temperature", llm_config.temperature),
+        )
+
+    # Load existing profile for --refine mode
+    existing_profile = None
+    if args.refine and config_file.exists():
+        import yaml
+
+        with open(config_file, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        topics = raw.get("topics", [])
+        existing_profile = {
+            "research_profile": topics[0].get("research_profile", "") if topics else "",
+            "topics": topics,
+            "relevance_threshold": raw.get("filter", {}).get("relevance_threshold", 6),
+        }
+
+    advisor = ResearchAdvisor(
+        llm_config=llm_config,
+        config_path=config_path,
+        pdf_dir=Path(raw.get("pdf_dir", "data/pdfs") if config_file.exists() else "data/pdfs"),
+        sota_dir=Path(raw.get("sota_dir", "data/sota") if config_file.exists() else "data/sota"),
+        existing_profile=existing_profile,
+    )
+    advisor.run()
+
+
 async def cmd_stats(config):
     """Show database statistics."""
     from src.storage.database import Database
@@ -160,12 +229,24 @@ def main():
     subparsers.add_parser("sota", help="Show SOTA tracking table")
     subparsers.add_parser("stats", help="Show database statistics")
 
+    onboard_parser = subparsers.add_parser(
+        "onboard", help="Interactive onboarding: set up research profile"
+    )
+    onboard_parser.add_argument(
+        "--refine", action="store_true",
+        help="Refine existing profile instead of starting fresh",
+    )
+
     args = parser.parse_args()
     setup_logging(args.verbose)
 
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    if args.command == "onboard":
+        cmd_onboard(args)
+        return
 
     config = load_config(args.config)
 
