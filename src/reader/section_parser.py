@@ -74,7 +74,16 @@ def get_section_for_pass(sections: dict[str, str], pass_name: str) -> str:
         for key in ["experiments", "discussion"]:
             if key in sections:
                 parts.append(sections[key])
-        return "\n\n".join(parts) if parts else sections["full_text"][15000:30000]
+        text = "\n\n".join(parts) if parts else ""
+        # If the extracted experiment section is too short (< 3000 chars),
+        # it likely missed table data due to PDF parsing issues.
+        # Fall back to the latter portion of full_text which typically
+        # contains experiments and results.
+        if len(text) < 3000:
+            full = sections["full_text"]
+            # Use the second half of the paper (experiments are usually there)
+            text = full[len(full) // 3:]
+        return text
 
     elif pass_name == "context":
         parts = []

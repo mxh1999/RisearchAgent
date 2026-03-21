@@ -152,14 +152,18 @@ class DeepReader:
 
         entries = []
         for raw in raw_entries:
-            results = [
-                MethodResult(
-                    method_name=r["method"],
-                    value=float(r["value"]),
+            results = []
+            for r in raw.get("results", []):
+                try:
+                    value = float(r["value"])
+                except (TypeError, ValueError, KeyError):
+                    logger.warning(f"Skipping result with invalid value: {r}")
+                    continue
+                results.append(MethodResult(
+                    method_name=r.get("method", "unknown"),
+                    value=value,
                     is_paper_method=r.get("is_paper_method", False),
-                )
-                for r in raw.get("results", [])
-            ]
+                ))
             entries.append(
                 ExperimentEntry(
                     benchmark=raw["benchmark"],
