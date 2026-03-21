@@ -1,40 +1,26 @@
 topics:
-  - name: "Embodied AI"
-    query: 'cat:cs.AI AND (embodied OR embodiment OR "embodied agent")'
-    categories: ["cs.AI", "cs.RO"]
-    research_profile: >
-      I research embodied AI agents that can perceive, reason, and act in
-      physical or simulated environments. Interested in vision-language-action
-      models, sim-to-real transfer, and multi-modal grounding for robotics.
-
-  - name: "Navigation"
-    query: '(cat:cs.RO OR cat:cs.AI) AND (navigation OR "visual navigation" OR "robot navigation")'
+  - name: "Object Navigation"
+    query: '(cat:cs.RO OR cat:cs.AI OR cat:cs.CV) AND ("object navigation" OR ObjectNav OR "object goal navigation")'
     categories: ["cs.RO", "cs.AI", "cs.CV"]
     research_profile: >
-      Focused on visual navigation and spatial reasoning for autonomous agents.
-      Interested in ObjectNav, PointNav, vision-and-language navigation (VLN),
-      semantic mapping, and exploration strategies.
-
-  - name: "LLM Planning"
-    query: '(cat:cs.CL OR cat:cs.AI) AND ("large language model" OR LLM) AND (planning OR "task planning")'
-    categories: ["cs.CL", "cs.AI"]
-    research_profile: >
-      Studying how large language models can be used for task planning,
-      especially in robotics and embodied AI. Interested in chain-of-thought
-      reasoning, tool use, hierarchical planning, and grounding LLM plans
-      in physical actions.
+      I research object goal navigation (ObjectNav) for embodied agents.
+      Interested in methods that enable robots or virtual agents to navigate
+      to target objects in unseen environments using visual observations.
+      Key topics: semantic mapping, frontier exploration, zero-shot ObjectNav,
+      LLM/VLM-based navigation, modular vs end-to-end approaches,
+      sim-to-real transfer, and benchmark performance on HM3D/MP3D/RoboTHOR.
 
 llm:
   filter_model: "gemini-2.5-flash"
   reader_model: "gemini-2.5-pro"
-  embedding_model: "text-embedding-004"
+  embedding_model: "gemini-embedding-001"
   max_concurrent: 5
   temperature: 0.3
 
 scraper:
-  max_results_per_topic: 50
+  max_results_per_topic: 20
   delay_seconds: 3.0
-  days_lookback: 7
+  days_lookback: 30
 
 filter:
   relevance_threshold: 6
