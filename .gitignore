@@ -13,11 +13,11 @@ build/
 venv/
 env/
 
-# Data (keep structure, ignore contents)
-data/papers.db
-data/chroma/
-data/pdfs/*.pdf
-data/reports/*.md
+# Data
+data/
+
+# Claude Code
+.claude/
 
 # IDE
 .idea/
