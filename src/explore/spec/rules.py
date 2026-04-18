@@ -1,15 +1,19 @@
 """Spec rule catalog.
 
-M1 subset: 3 rules covering the core spec mechanics
+M1 subset:
   - read_paper_budget (budget enforcement)
   - no_repeated_exact_action (anti-loop)
   - deadlock_abort (escape hatch for rule deadlock)
 
-Remaining 8 rules (time_budget, action_budget, query_diversity,
-query_must_be_specific_after_warmup, no_premature_stop_saturation,
-no_premature_stop_coverage, force_cluster_refresh_on_pool_growth,
-require_coverage_audit_before_stop, deadlock_escalate) land in later
-milestones as their dependencies (clustering, coverage audit, etc) arrive.
+M2 additions:
+  - action_budget (hard stop on total action count — safe early-stopping
+    for real runs before saturation-based stop rules land in M4)
+
+Remaining rules (time_budget, query_diversity, query_must_be_specific_after_warmup,
+no_premature_stop_saturation, no_premature_stop_coverage,
+force_cluster_refresh_on_pool_growth, require_coverage_audit_before_stop,
+deadlock_escalate) arrive in later milestones as their state dependencies
+(clustering, coverage audit, query embeddings) are built.
 """
 
 from __future__ import annotations
@@ -55,6 +59,10 @@ class Rule:
 
 def _read_paper_budget_exceeded(state, action) -> bool:
     return state.budget.read_papers_used >= state.budget.read_paper_budget
+
+
+def _action_budget_exceeded(state, action) -> bool:
+    return state.budget.actions_used >= state.budget.action_budget
 
 
 def _action_equals_previous_executed(state, action) -> bool:
@@ -107,6 +115,33 @@ RULE_NO_REPEATED_EXACT_ACTION = Rule(
 )
 
 
+RULE_ACTION_BUDGET = Rule(
+    name="action_budget",
+    description=(
+        "Total action count cap. Forces a stop when budget.actions_used >= "
+        "budget.action_budget. Safe default early-stopper for real runs "
+        "before saturation-based stop rules (M4) exist."
+    ),
+    applies_to=None,
+    predicates=[_action_budget_exceeded],
+    verdict_fn=lambda state, action: Verdict(
+        kind="force",
+        rule_name="action_budget",
+        feedback=(
+            f"Action budget exhausted "
+            f"({state.budget.actions_used}/{state.budget.action_budget}). "
+            f"Forcing stop."
+        ),
+        forced_action=StopAction(
+            claimed_reason="budget_exhausted",
+            reasoning="forced by action_budget rule",
+        ),
+    ),
+    severity=20,
+    fail_policy="abort",
+)
+
+
 RULE_DEADLOCK_ABORT = Rule(
     name="deadlock_abort",
     description=(
@@ -142,4 +177,6 @@ ALL_RULES: list[Rule] = [
     RULE_READ_PAPER_BUDGET,
     RULE_NO_REPEATED_EXACT_ACTION,
     RULE_DEADLOCK_ABORT,
+    # M2 additions
+    RULE_ACTION_BUDGET,
 ]

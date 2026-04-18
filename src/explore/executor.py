@@ -1,16 +1,21 @@
 """Action executor: handles each Action type's side effects on state.
 
-M1 ships stub handlers for every action type — they return fake results
-and don't touch the network / filesystem / ChromaDB. Real handlers land
-in M2+ per docs/onboard-redesign/06-action-system.md "ActionDetails" section.
+Dependencies (searcher, embeddings) are injected at construction time. When
+omitted, handlers fall back to stub behavior — this keeps the M1 test path
+and any future dry-run mode working without touching the network.
+
+M2 implements search and its side effects (embedding + paper_pool update).
+Other actions remain stubs until their own milestone (M3 clustering, M4
+coverage audit, M6 citations, M7 read_paper).
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from src.explore.actions import (
     ClusterRefreshAction,
@@ -23,10 +28,12 @@ from src.explore.actions import (
     SkimAbstractAction,
     StopAction,
 )
-from src.explore.state import LLMCallRecord
+from src.explore.state import LLMCallRecord, PaperRecord, QueryRecord
 
 if TYPE_CHECKING:
     from src.explore.actions import Action
+    from src.explore.crawl import ExplorerSearcher
+    from src.explore.embeddings import EmbeddingStore
     from src.explore.state import ExplorationState
 
 
@@ -45,7 +52,20 @@ class ActionResult:
 
 
 class ActionExecutor:
-    """Dispatches actions to their handlers."""
+    """Dispatches actions to their handlers.
+
+    Deps are optional so that tests can use the executor without external
+    services (they get stub behavior). In production, provide all deps
+    that the actions used in this run will need.
+    """
+
+    def __init__(
+        self,
+        searcher: Optional["ExplorerSearcher"] = None,
+        embeddings: Optional["EmbeddingStore"] = None,
+    ):
+        self.searcher = searcher
+        self.embeddings = embeddings
 
     async def execute(
         self, action: "Action", state: "ExplorationState"
@@ -72,15 +92,90 @@ class ActionExecutor:
         return result
 
     # —————————————————————————————————————————————————————
-    # M1 stubs — return fake results, don't touch the outside world
+    # Search (M2 — real implementation)
     # —————————————————————————————————————————————————————
 
     async def _handle_search(self, action: SearchAction, state):
+        if self.searcher is None:
+            return ActionResult(
+                success=True,
+                summary=f"[stub] search: {action.query!r} (searcher not configured)",
+                details={"query_id": "stub", "n_new": 0, "stub": True},
+            )
+
+        # 1. Query ArXiv
+        raw_results = await self.searcher.search(
+            query=action.query,
+            categories=action.categories,
+            max_results=action.max_results,
+            date_range=action.date_range,
+            sort_by=action.sort_by,
+        )
+
+        # 2. Deduplicate against the pool
+        new_papers = [r for r in raw_results if r["arxiv_id"] not in state.paper_pool]
+
+        # 3. Embed + store (if EmbeddingStore is configured)
+        query_id = f"q-{uuid.uuid4().hex[:8]}"
+        embed_map: dict[str, str] = {}
+        query_embedding_id: Optional[str] = None
+        if self.embeddings is not None:
+            if new_papers:
+                embed_ids = await self.embeddings.add_papers(new_papers)
+                embed_map = dict(zip((p["arxiv_id"] for p in new_papers), embed_ids))
+            # Also store the query itself (for diversity checks later)
+            query_embedding_id = await self.embeddings.add_query(query_id, action.query)
+
+        # 4. Insert into paper_pool.
+        # Use state.turn+1 because this action's turn increments *after* executor returns.
+        action_turn = state.turn + 1
+        for r in new_papers:
+            state.paper_pool[r["arxiv_id"]] = PaperRecord(
+                arxiv_id=r["arxiv_id"],
+                title=r["title"],
+                abstract=r["abstract"],
+                authors=r["authors"],
+                published=r["published"],
+                categories=r["categories"],
+                pdf_url=r["pdf_url"],
+                first_seen_turn=action_turn,
+                source="search",
+                source_query_id=query_id,
+                embedding_id=embed_map.get(r["arxiv_id"]),
+                is_noise=False,
+            )
+
+        # 5. Record QueryRecord
+        state.query_log.append(
+            QueryRecord(
+                query_id=query_id,
+                turn=action_turn,
+                query_text=action.query,
+                categories=action.categories,
+                source=action.source_tag,
+                targeted_cluster_slug=action.targeted_cluster_slug,
+                query_embedding_id=query_embedding_id,
+                n_results_raw=len(raw_results),
+                n_new_to_pool=len(new_papers),
+                executed_at=datetime.now(),
+            )
+        )
+
+        n_dupes = len(raw_results) - len(new_papers)
         return ActionResult(
             success=True,
-            summary=f"[stub] search: {action.query!r} (0 fake results)",
-            details={"query_id": "stub", "n_new": 0},
+            summary=f"search: +{len(new_papers)} papers ({n_dupes} dupes)",
+            details={
+                "query_id": query_id,
+                "n_fetched": len(raw_results),
+                "n_new": len(new_papers),
+                "n_deduped": n_dupes,
+            },
         )
+
+    # —————————————————————————————————————————————————————
+    # Remaining handlers — stubs until their milestones land
+    # —————————————————————————————————————————————————————
 
     async def _handle_search_by_author(self, action: SearchByAuthorAction, state):
         return ActionResult(
@@ -103,31 +198,32 @@ class ActionExecutor:
     async def _handle_cluster_refresh(self, action: ClusterRefreshAction, state):
         return ActionResult(
             success=True,
-            summary="[stub] cluster_refresh: no-op",
+            summary="[stub] cluster_refresh: no-op (M3)",
         )
 
     async def _handle_skim_abstract(self, action: SkimAbstractAction, state):
         return ActionResult(
             success=True,
-            summary=f"[stub] skim_abstract: {action.arxiv_id}",
+            summary=f"[stub] skim_abstract: {action.arxiv_id} (M4)",
         )
 
     async def _handle_read_paper(self, action: ReadPaperAction, state):
+        # Bumps the budget so the budget rule can be exercised with a stub.
         state.budget.read_papers_used += 1
         return ActionResult(
             success=True,
             summary=f"[stub] read_paper: {action.arxiv_id} "
-            f"(read_papers_used now {state.budget.read_papers_used})",
+            f"(read_papers_used now {state.budget.read_papers_used}) (M7)",
         )
 
     async def _handle_coverage_audit(self, action: CoverageAuditAction, state):
         return ActionResult(
             success=True,
-            summary="[stub] coverage_audit: no-op",
+            summary="[stub] coverage_audit: no-op (M4)",
         )
 
     async def _handle_stop(self, action: StopAction, state):
         return ActionResult(
             success=True,
-            summary=f"[stub] stop requested: claimed_reason={action.claimed_reason}",
+            summary=f"stop requested: claimed_reason={action.claimed_reason}",
         )
