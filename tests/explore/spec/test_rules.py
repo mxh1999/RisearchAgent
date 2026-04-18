@@ -22,6 +22,7 @@ from src.explore.spec import (
     Verdict,
 )
 from src.explore.spec.rules import (
+    RULE_ACTION_BUDGET,
     RULE_DEADLOCK_ABORT,
     RULE_NO_REPEATED_EXACT_ACTION,
     RULE_READ_PAPER_BUDGET,
@@ -181,6 +182,41 @@ def test_deadlock_counter_resets_after_executed_action():
 
 
 # —————————————————————————————————————————————————————————————
+# RULE_ACTION_BUDGET
+# —————————————————————————————————————————————————————————————
+
+
+def test_action_budget_inactive_below_limit():
+    state = make_state(actions_used=59, action_budget=60)
+    action = SearchAction(query="any", reasoning="test filler for action_budget")
+    verdict = SpecEvaluator([RULE_ACTION_BUDGET]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_action_budget_forces_stop_at_limit():
+    state = make_state(actions_used=60, action_budget=60)
+    action = SearchAction(query="any", reasoning="test filler for action_budget")
+    verdict = SpecEvaluator([RULE_ACTION_BUDGET]).evaluate(action, state)
+    assert verdict.kind == "force"
+    assert verdict.rule_name == "action_budget"
+    assert verdict.forced_action is not None
+    assert verdict.forced_action.action_type == "stop"
+    assert verdict.forced_action.claimed_reason == "budget_exhausted"
+
+
+def test_action_budget_applies_even_to_stop_proposal():
+    """Even if Planner proposes stop, action_budget still fires first (both force stop anyway)."""
+    state = make_state(actions_used=60, action_budget=60)
+    action = StopAction(
+        claimed_reason="saturated",
+        reasoning="test: planner proposes stop when budget also exhausted",
+    )
+    verdict = SpecEvaluator([RULE_ACTION_BUDGET]).evaluate(action, state)
+    # rule applies_to=None so it still fires
+    assert verdict.kind == "force"
+
+
+# —————————————————————————————————————————————————————————————
 # Arbitration: most-severe wins
 # —————————————————————————————————————————————————————————————
 
@@ -244,9 +280,14 @@ def test_fail_policy_skip_silently_ignores_rule():
 # —————————————————————————————————————————————————————————————
 
 
-def test_all_rules_registry_contains_m1_rules():
+def test_all_rules_registry_contains_m1_m2_rules():
     names = {r.name for r in ALL_RULES}
-    assert {"read_paper_budget", "no_repeated_exact_action", "deadlock_abort"} <= names
+    assert {
+        "read_paper_budget",
+        "no_repeated_exact_action",
+        "deadlock_abort",
+        "action_budget",
+    } <= names
 
 
 def test_all_rules_have_unique_names():
