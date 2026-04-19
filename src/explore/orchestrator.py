@@ -18,7 +18,7 @@ from typing import Optional
 from src.explore.actions import SearchAction, StopAction
 from src.explore.checkpoint import checkpoint_path_for, save_checkpoint
 from src.explore.executor import ActionExecutor, ActionResult
-from src.explore.planner import Planner
+from src.explore.planner import LLMPlannerError, Planner
 from src.explore.spec import (
     ALL_RULES,
     QUERY_DIVERSITY_WINDOW,
@@ -64,7 +64,13 @@ class Explorer:
                 self.state.budget.elapsed_seconds = time.monotonic() - self._start_time
 
                 # 1. Planner proposes
-                action = await self.planner.propose(self.state, last_verdict)
+                try:
+                    action = await self.planner.propose(self.state, last_verdict)
+                except LLMPlannerError as e:
+                    # Structural failure per Q8: fail-fast, save state, exit.
+                    logger.error("[orchestrator] planner produced malformed output")
+                    self._mark_failed("llm_malformed_json", str(e))
+                    break
 
                 # 2. Pre-evaluate: compute any transient data spec rules will read.
                 #    This keeps spec predicates purely synchronous.
