@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from src.explore.actions import Action, action_equal
 
@@ -263,6 +263,13 @@ class ExplorationState(BaseModel):
     budget: BudgetState = Field(default_factory=BudgetState)
 
     # —————————————————————————————————————————————————————
+    # Transient runtime state (NOT serialized).
+    # Orchestrator pre-computes data for spec predicates to read
+    # synchronously (e.g., query embedding similarity).
+    # —————————————————————————————————————————————————————
+    _transient: dict = PrivateAttr(default_factory=dict)
+
+    # —————————————————————————————————————————————————————
     # Derived properties (NOT persisted; spec predicates read these)
     # —————————————————————————————————————————————————————
 
@@ -329,3 +336,7 @@ class ExplorationState(BaseModel):
         if prev is None:
             return False
         return action_equal(action, prev)
+
+    def recent_query_ids(self, n: int = 3) -> list[str]:
+        """Last n query_ids from query_log (for diversity rule pre-compute)."""
+        return [q.query_id for q in self.query_log[-n:]]

@@ -24,10 +24,13 @@ from typing import TYPE_CHECKING, Callable, Literal, Optional
 from src.explore.actions import (
     CoverageAuditAction,
     ReadPaperAction,
+    SearchAction,
     StopAction,
 )
 from src.explore.spec.constants import (
     DEADLOCK_ABORT_THRESHOLD,
+    QUERY_DIVERSITY_THRESHOLD,
+    QUERY_WARMUP_POOL_SIZE,
     READ_PAPER_BUDGET_DEFAULT,
 )
 from src.explore.spec.evaluator import Verdict
@@ -73,6 +76,34 @@ def _consecutive_blocked_geq_abort(state, action) -> bool:
     return state.consecutive_blocked_actions >= DEADLOCK_ABORT_THRESHOLD
 
 
+def _query_too_similar_to_recent(state, action) -> bool:
+    """Reads state._transient['query_max_similarity'] set by orchestrator pre-eval.
+
+    Returns True if the proposed query is too similar to recent queries.
+    If similarity wasn't pre-computed (no embedding_store configured), treats
+    as not-similar so the rule doesn't fire spuriously.
+    """
+    if not isinstance(action, SearchAction):
+        return False
+    sim = state._transient.get("query_max_similarity")
+    if sim is None:
+        return False
+    return sim > QUERY_DIVERSITY_THRESHOLD
+
+
+def _query_must_be_specific_after_warmup(state, action) -> bool:
+    """After pool > warmup size, search must be targeted or use a specific source_tag."""
+    if not isinstance(action, SearchAction):
+        return False
+    if state.pool_size <= QUERY_WARMUP_POOL_SIZE:
+        return False
+    is_broad = action.targeted_cluster_slug is None and action.source_tag in (
+        "llm_generated",
+        "user_intent_rewrite",
+    )
+    return is_broad
+
+
 # —————————————————————————————————————————————————————————————
 # Rule definitions
 # —————————————————————————————————————————————————————————————
@@ -112,6 +143,54 @@ RULE_NO_REPEATED_EXACT_ACTION = Rule(
     ),
     severity=3,
     fail_policy="abort",
+)
+
+
+RULE_QUERY_DIVERSITY = Rule(
+    name="query_diversity",
+    description=(
+        "Block SearchAction whose query cosine-similarity to any of the "
+        "most recent queries exceeds QUERY_DIVERSITY_THRESHOLD. Similarity "
+        "is pre-computed by the orchestrator into state._transient."
+    ),
+    applies_to=[SearchAction],
+    predicates=[_query_too_similar_to_recent],
+    verdict_fn=lambda state, action: Verdict(
+        kind="block",
+        rule_name="query_diversity",
+        feedback=(
+            f"Query too similar to recent searches "
+            f"(max cosine={state._transient.get('query_max_similarity', 0):.2f}, "
+            f"threshold={QUERY_DIVERSITY_THRESHOLD}). Try a different angle: "
+            f"target an under-explored cluster, use author/benchmark seeding, "
+            f"or lookup classics."
+        ),
+    ),
+    severity=5,
+    fail_policy="skip",  # soft signal; if pre-compute fails, don't block run
+)
+
+
+RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP = Rule(
+    name="query_must_be_specific_after_warmup",
+    description=(
+        f"After pool > {QUERY_WARMUP_POOL_SIZE} papers, a SearchAction must "
+        f"target a specific cluster (targeted_cluster_slug) or use a "
+        f"non-broad source_tag (classic_lookup / benchmark_seeded)."
+    ),
+    applies_to=[SearchAction],
+    predicates=[_query_must_be_specific_after_warmup],
+    verdict_fn=lambda state, action: Verdict(
+        kind="block",
+        rule_name="query_must_be_specific_after_warmup",
+        feedback=(
+            f"Pool has {state.pool_size} papers; broad searches no longer add "
+            f"value. Target a specific cluster (via targeted_cluster_slug) or "
+            f"use source_tag='classic_lookup' / 'benchmark_seeded'."
+        ),
+    ),
+    severity=5,
+    fail_policy="skip",
 )
 
 
@@ -179,4 +258,6 @@ ALL_RULES: list[Rule] = [
     RULE_DEADLOCK_ABORT,
     # M2 additions
     RULE_ACTION_BUDGET,
+    RULE_QUERY_DIVERSITY,
+    RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
 ]

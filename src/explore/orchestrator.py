@@ -15,12 +15,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from src.explore.actions import StopAction
+from src.explore.actions import SearchAction, StopAction
 from src.explore.checkpoint import checkpoint_path_for, save_checkpoint
 from src.explore.executor import ActionExecutor, ActionResult
 from src.explore.planner import Planner
 from src.explore.spec import (
     ALL_RULES,
+    QUERY_DIVERSITY_WINDOW,
     SpecEvaluator,
     SpecPredicateError,
     Verdict,
@@ -65,7 +66,11 @@ class Explorer:
                 # 1. Planner proposes
                 action = await self.planner.propose(self.state, last_verdict)
 
-                # 2. Spec evaluates
+                # 2. Pre-evaluate: compute any transient data spec rules will read.
+                #    This keeps spec predicates purely synchronous.
+                await self._pre_evaluate(action)
+
+                # 3. Spec evaluates
                 try:
                     verdict = self.evaluator.evaluate(action, self.state)
                 except SpecPredicateError as e:
@@ -186,3 +191,42 @@ class Explorer:
     def _mark_failed(self, reason: str, detail: str) -> None:
         self.state.metadata.status = "failed"
         self.state.metadata.termination_reason = f"{reason}: {detail}"
+
+    # —————————————————————————————————————————————————————
+    # Async pre-evaluate: prepare transient data for sync spec predicates
+    # —————————————————————————————————————————————————————
+
+    async def _pre_evaluate(self, action) -> None:
+        """Compute transient fields that spec predicates read synchronously.
+
+        Currently:
+          - query_max_similarity: cosine sim of the proposed query vs recent
+            queries (used by RULE_QUERY_DIVERSITY).
+
+        If embeddings aren't configured or compute fails, sets sensible defaults
+        so rules don't fire spuriously.
+        """
+        # Clear transient from previous proposal
+        self.state._transient.clear()
+
+        if not isinstance(action, SearchAction):
+            return
+
+        embeddings = getattr(self.executor, "embeddings", None)
+        if embeddings is None:
+            return
+
+        recent_ids = self.state.recent_query_ids(n=QUERY_DIVERSITY_WINDOW)
+        if not recent_ids:
+            self.state._transient["query_max_similarity"] = 0.0
+            return
+
+        try:
+            sim = await embeddings.max_similarity_to_recent_queries(
+                action.query, recent_ids
+            )
+            self.state._transient["query_max_similarity"] = sim
+        except Exception as e:
+            logger.warning("pre-eval query similarity failed: %s", e)
+            # Don't block on an embedding failure — rule fail_policy=skip handles it
+            self.state._transient["query_max_similarity"] = 0.0

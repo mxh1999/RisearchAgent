@@ -25,6 +25,8 @@ from src.explore.spec.rules import (
     RULE_ACTION_BUDGET,
     RULE_DEADLOCK_ABORT,
     RULE_NO_REPEATED_EXACT_ACTION,
+    RULE_QUERY_DIVERSITY,
+    RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
     RULE_READ_PAPER_BUDGET,
     Rule,
 )
@@ -217,6 +219,143 @@ def test_action_budget_applies_even_to_stop_proposal():
 
 
 # —————————————————————————————————————————————————————————————
+# RULE_QUERY_DIVERSITY  (M2 step 2)
+# —————————————————————————————————————————————————————————————
+
+
+def test_query_diversity_skips_when_not_precomputed():
+    """If orchestrator didn't pre-compute similarity, rule is a no-op."""
+    state = make_state()
+    # state._transient is empty
+    action = SearchAction(query="any", reasoning="test filler for diversity")
+    verdict = SpecEvaluator([RULE_QUERY_DIVERSITY]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_query_diversity_allows_when_similarity_low():
+    state = make_state()
+    state._transient["query_max_similarity"] = 0.5
+    action = SearchAction(query="any", reasoning="test filler for diversity")
+    verdict = SpecEvaluator([RULE_QUERY_DIVERSITY]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_query_diversity_blocks_when_similarity_high():
+    state = make_state()
+    state._transient["query_max_similarity"] = 0.95  # > 0.92 threshold
+    action = SearchAction(query="any", reasoning="test filler for diversity")
+    verdict = SpecEvaluator([RULE_QUERY_DIVERSITY]).evaluate(action, state)
+    assert verdict.kind == "block"
+    assert verdict.rule_name == "query_diversity"
+    assert "0.95" in verdict.feedback
+
+
+def test_query_diversity_skips_non_search_actions():
+    state = make_state()
+    state._transient["query_max_similarity"] = 0.99
+    # Non-search action shouldn't be affected even if similarity field is high
+    action = ReadPaperAction(
+        arxiv_id="2401.00001", reasoning="test filler for diversity"
+    )
+    verdict = SpecEvaluator([RULE_QUERY_DIVERSITY]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+# —————————————————————————————————————————————————————————————
+# RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP  (M2 step 2)
+# —————————————————————————————————————————————————————————————
+
+
+def _state_with_pool_size(n: int):
+    """Helper: make a state whose pool_size == n (cheap synthetic entries)."""
+    from datetime import date
+    from src.explore.state import PaperRecord
+
+    state = make_state()
+    for i in range(n):
+        aid = f"2401.{i:05d}"
+        state.paper_pool[aid] = PaperRecord(
+            arxiv_id=aid,
+            title=f"Paper {i}",
+            abstract="stub",
+            authors=["A"],
+            published=date(2024, 1, 1),
+            categories=["cs.AI"],
+            pdf_url="",
+            first_seen_turn=1,
+            source="search",
+            is_noise=False,
+        )
+    return state
+
+
+def test_warmup_rule_inactive_below_threshold():
+    """pool_size <= QUERY_WARMUP_POOL_SIZE (50): broad search is allowed."""
+    state = _state_with_pool_size(50)  # on the boundary (not strictly >)
+    action = SearchAction(
+        query="navigation", reasoning="test: still warming up"
+    )
+    verdict = SpecEvaluator(
+        [RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP]
+    ).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_warmup_rule_blocks_broad_search_after_warmup():
+    state = _state_with_pool_size(51)
+    action = SearchAction(
+        query="navigation",
+        source_tag="llm_generated",
+        reasoning="test: broad search after warmup",
+    )
+    verdict = SpecEvaluator(
+        [RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP]
+    ).evaluate(action, state)
+    assert verdict.kind == "block"
+    assert verdict.rule_name == "query_must_be_specific_after_warmup"
+
+
+def test_warmup_rule_allows_targeted_cluster_after_warmup():
+    state = _state_with_pool_size(80)
+    action = SearchAction(
+        query="vln-ce recent methods",
+        source_tag="cluster_targeted",
+        targeted_cluster_slug="vln-ce",
+        reasoning="test: targeted search",
+    )
+    verdict = SpecEvaluator(
+        [RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP]
+    ).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_warmup_rule_allows_classic_lookup_after_warmup():
+    state = _state_with_pool_size(80)
+    action = SearchAction(
+        query="slam 2018 2021",
+        source_tag="classic_lookup",
+        reasoning="test: classic lookup source_tag exempts the rule",
+    )
+    verdict = SpecEvaluator(
+        [RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP]
+    ).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_warmup_rule_allows_benchmark_seeded_after_warmup():
+    state = _state_with_pool_size(80)
+    action = SearchAction(
+        query="HM3D benchmark",
+        source_tag="benchmark_seeded",
+        reasoning="test: benchmark seeded source_tag exempts the rule",
+    )
+    verdict = SpecEvaluator(
+        [RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP]
+    ).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+# —————————————————————————————————————————————————————————————
 # Arbitration: most-severe wins
 # —————————————————————————————————————————————————————————————
 
@@ -287,6 +426,8 @@ def test_all_rules_registry_contains_m1_m2_rules():
         "no_repeated_exact_action",
         "deadlock_abort",
         "action_budget",
+        "query_diversity",
+        "query_must_be_specific_after_warmup",
     } <= names
 
 
