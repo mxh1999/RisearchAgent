@@ -32,6 +32,7 @@ from src.explore.state import LLMCallRecord, PaperRecord, QueryRecord
 
 if TYPE_CHECKING:
     from src.explore.actions import Action
+    from src.explore.cluster import Clusterer
     from src.explore.crawl import ExplorerSearcher
     from src.explore.embeddings import EmbeddingStore
     from src.explore.state import ExplorationState
@@ -63,9 +64,11 @@ class ActionExecutor:
         self,
         searcher: Optional["ExplorerSearcher"] = None,
         embeddings: Optional["EmbeddingStore"] = None,
+        clusterer: Optional["Clusterer"] = None,
     ):
         self.searcher = searcher
         self.embeddings = embeddings
+        self.clusterer = clusterer
 
     async def execute(
         self, action: "Action", state: "ExplorationState"
@@ -196,9 +199,48 @@ class ActionExecutor:
         )
 
     async def _handle_cluster_refresh(self, action: ClusterRefreshAction, state):
+        if self.clusterer is None:
+            return ActionResult(
+                success=True,
+                summary="[stub] cluster_refresh: no Clusterer configured",
+                details={"stub": True},
+            )
+
+        # Lazy import to avoid coupling Executor to clusterer at module load
+        from src.explore.cluster import InsufficientPoolError
+
+        try:
+            result = await self.clusterer.refresh(state)
+        except InsufficientPoolError as e:
+            return ActionResult(
+                success=True,
+                summary=f"cluster_refresh: insufficient_papers ({e})",
+                details={"status": "insufficient_papers", "reason": str(e)},
+            )
+
+        summary_bits = [
+            f"clusters={result.n_clusters}",
+            f"noise={result.n_noise}",
+        ]
+        if result.new_slugs:
+            summary_bits.append(f"new={','.join(result.new_slugs)}")
+        if result.disappeared_slugs:
+            summary_bits.append(f"gone={','.join(result.disappeared_slugs)}")
+        if result.used_fallback_labels:
+            summary_bits.append("fallback_labels=True")
+
         return ActionResult(
             success=True,
-            summary="[stub] cluster_refresh: no-op (M3)",
+            summary=f"cluster_refresh: {', '.join(summary_bits)}",
+            details={
+                "snapshot_id": result.snapshot_id,
+                "n_clusters": result.n_clusters,
+                "new_slugs": result.new_slugs,
+                "disappeared_slugs": result.disappeared_slugs,
+                "structural_change_rate": result.structural_change_rate,
+                "n_noise": result.n_noise,
+                "used_fallback_labels": result.used_fallback_labels,
+            },
         )
 
     async def _handle_skim_abstract(self, action: SkimAbstractAction, state):

@@ -96,7 +96,10 @@ Emit nothing before or after the JSON object.
 - source_tag must be one of: user_intent_rewrite | llm_generated |
   cluster_targeted | benchmark_seeded | classic_lookup
 - sort_by: "relevance" or "date"
-- date_range is optional; omit or use null if not needed
+- date_range: either omit the field entirely OR provide it as a 2-element
+  array of ISO date strings ["YYYY-MM-DD", "YYYY-MM-DD"]. NEVER use null
+  inside the array (e.g. ["2020-01-01", null] is INVALID — drop the field
+  instead). Both dates must be present and end >= start.
 - targeted_cluster_slug is optional; only set when source_tag == "cluster_targeted"
 
 **search_by_author**

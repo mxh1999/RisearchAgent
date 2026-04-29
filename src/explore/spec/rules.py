@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 from src.explore.actions import (
+    ClusterRefreshAction,
     CoverageAuditAction,
     ReadPaperAction,
     SearchAction,
@@ -29,6 +30,7 @@ from src.explore.actions import (
 )
 from src.explore.spec.constants import (
     DEADLOCK_ABORT_THRESHOLD,
+    FORCE_CLUSTER_REFRESH_DELTA,
     QUERY_DIVERSITY_THRESHOLD,
     QUERY_WARMUP_POOL_SIZE,
     READ_PAPER_BUDGET_DEFAULT,
@@ -74,6 +76,14 @@ def _action_equals_previous_executed(state, action) -> bool:
 
 def _consecutive_blocked_geq_abort(state, action) -> bool:
     return state.consecutive_blocked_actions >= DEADLOCK_ABORT_THRESHOLD
+
+
+def _action_is_not_cluster_refresh(state, action) -> bool:
+    return not isinstance(action, ClusterRefreshAction)
+
+
+def _pool_grew_since_last_refresh(state, action) -> bool:
+    return state.papers_since_last_cluster_refresh() >= FORCE_CLUSTER_REFRESH_DELTA
 
 
 def _query_too_similar_to_recent(state, action) -> bool:
@@ -221,6 +231,33 @@ RULE_ACTION_BUDGET = Rule(
 )
 
 
+RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH = Rule(
+    name="force_cluster_refresh_on_pool_growth",
+    description=(
+        f"When the pool has grown by >= {FORCE_CLUSTER_REFRESH_DELTA} papers "
+        f"since the last cluster_refresh, force one before the next non-refresh "
+        f"action so subsequent decisions read a fresh snapshot."
+    ),
+    applies_to=None,
+    predicates=[_action_is_not_cluster_refresh, _pool_grew_since_last_refresh],
+    verdict_fn=lambda state, action: Verdict(
+        kind="force",
+        rule_name="force_cluster_refresh_on_pool_growth",
+        feedback=(
+            f"Pool grew by {state.papers_since_last_cluster_refresh()} papers "
+            f"since last cluster_refresh; clustering view is stale. "
+            f"Refreshing first."
+        ),
+        forced_action=ClusterRefreshAction(
+            reasoning="forced by force_cluster_refresh_on_pool_growth",
+            force=False,
+        ),
+    ),
+    severity=15,
+    fail_policy="abort",
+)
+
+
 RULE_DEADLOCK_ABORT = Rule(
     name="deadlock_abort",
     description=(
@@ -260,4 +297,6 @@ ALL_RULES: list[Rule] = [
     RULE_ACTION_BUDGET,
     RULE_QUERY_DIVERSITY,
     RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
+    # M3 additions
+    RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH,
 ]
