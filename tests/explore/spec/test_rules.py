@@ -11,6 +11,7 @@ from datetime import datetime
 import pytest
 
 from src.explore.actions import (
+    ClusterRefreshAction,
     ReadPaperAction,
     SearchAction,
     StopAction,
@@ -24,6 +25,7 @@ from src.explore.spec import (
 from src.explore.spec.rules import (
     RULE_ACTION_BUDGET,
     RULE_DEADLOCK_ABORT,
+    RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH,
     RULE_NO_REPEATED_EXACT_ACTION,
     RULE_QUERY_DIVERSITY,
     RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
@@ -356,6 +358,81 @@ def test_warmup_rule_allows_benchmark_seeded_after_warmup():
 
 
 # —————————————————————————————————————————————————————————————
+# RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH  (M3)
+# —————————————————————————————————————————————————————————————
+
+
+def _state_with_papers_after_refresh(
+    n_after: int, prev_refresh_turn: int = 1
+):
+    """State whose action_history contains a refresh at turn `prev_refresh_turn`,
+    then `n_after` new papers added at later turns."""
+    from datetime import date
+    from src.explore.state import ActionRecord, PaperRecord
+
+    state = make_state()
+    # Synthesize an executed cluster_refresh record at turn=prev_refresh_turn
+    state.action_history.append(
+        ActionRecord(
+            turn=prev_refresh_turn,
+            action=ClusterRefreshAction(reasoning="prior refresh in fixture"),
+            was_executed=True,
+            spec_verdict="allow",
+            outcome="success",
+            outcome_summary="prior refresh",
+        )
+    )
+    # Add papers with first_seen_turn > prev_refresh_turn
+    for i in range(n_after):
+        aid = f"24{i:04d}.{i:05d}"
+        state.paper_pool[aid] = PaperRecord(
+            arxiv_id=aid,
+            title=f"Paper {i}",
+            abstract="stub",
+            authors=["A"],
+            published=date(2024, 1, 1),
+            categories=["cs.AI"],
+            pdf_url="",
+            first_seen_turn=prev_refresh_turn + 1,  # strictly after refresh
+            source="search",
+        )
+    return state
+
+
+def test_force_cluster_refresh_inactive_when_growth_below_threshold():
+    state = _state_with_papers_after_refresh(n_after=14)  # < 15 threshold
+    action = SearchAction(query="any", reasoning="test filler")
+    verdict = SpecEvaluator(
+        [RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH]
+    ).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_force_cluster_refresh_fires_at_threshold():
+    state = _state_with_papers_after_refresh(n_after=15)
+    action = SearchAction(query="any", reasoning="test filler")
+    verdict = SpecEvaluator(
+        [RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH]
+    ).evaluate(action, state)
+    assert verdict.kind == "force"
+    assert verdict.rule_name == "force_cluster_refresh_on_pool_growth"
+    assert verdict.forced_action is not None
+    assert verdict.forced_action.action_type == "cluster_refresh"
+
+
+def test_force_cluster_refresh_does_not_force_on_refresh_itself():
+    """The rule should NOT fire when the proposed action is already a refresh."""
+    state = _state_with_papers_after_refresh(n_after=20)
+    action = ClusterRefreshAction(
+        reasoning="planner explicitly proposes a refresh"
+    )
+    verdict = SpecEvaluator(
+        [RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH]
+    ).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+# —————————————————————————————————————————————————————————————
 # Arbitration: most-severe wins
 # —————————————————————————————————————————————————————————————
 
@@ -419,15 +496,19 @@ def test_fail_policy_skip_silently_ignores_rule():
 # —————————————————————————————————————————————————————————————
 
 
-def test_all_rules_registry_contains_m1_m2_rules():
+def test_all_rules_registry_contains_milestones():
     names = {r.name for r in ALL_RULES}
     assert {
+        # M1
         "read_paper_budget",
         "no_repeated_exact_action",
         "deadlock_abort",
+        # M2
         "action_budget",
         "query_diversity",
         "query_must_be_specific_after_warmup",
+        # M3
+        "force_cluster_refresh_on_pool_growth",
     } <= names
 
 
