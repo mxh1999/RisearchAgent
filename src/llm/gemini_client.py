@@ -15,7 +15,28 @@ class GeminiClient:
 
     def __init__(self, config: LLMConfig):
         self.config = config
-        self._client = genai.Client(api_key=config.api_key)
+
+        # Primary client: text generation (chat completions / generateContent).
+        chat_kwargs: dict = {"api_key": config.api_key}
+        if config.base_url:
+            chat_kwargs["http_options"] = genai.types.HttpOptions(
+                base_url=config.base_url
+            )
+        self._client = genai.Client(**chat_kwargs)
+
+        # Optional secondary client for embeddings, when the chat provider
+        # doesn't expose an embedding model. If embedding_api_key is unset,
+        # embed() reuses self._client.
+        if config.embedding_api_key:
+            embed_kwargs: dict = {"api_key": config.embedding_api_key}
+            if config.embedding_base_url:
+                embed_kwargs["http_options"] = genai.types.HttpOptions(
+                    base_url=config.embedding_base_url
+                )
+            self._embed_client = genai.Client(**embed_kwargs)
+        else:
+            self._embed_client = self._client
+
         self._semaphore = asyncio.Semaphore(config.max_concurrent)
 
     async def generate(
@@ -69,8 +90,12 @@ class GeminiClient:
         return json.loads(text)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for a list of texts."""
-        result = await self._client.aio.models.embed_content(
+        """Generate embeddings for a list of texts.
+
+        Routes to self._embed_client which may be a separate (key, base_url)
+        when the chat provider doesn't expose an embedding model.
+        """
+        result = await self._embed_client.aio.models.embed_content(
             model=self.config.embedding_model,
             contents=texts,
         )

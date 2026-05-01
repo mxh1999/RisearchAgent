@@ -16,6 +16,14 @@ class LLMConfig:
     api_key: str
     max_concurrent: int
     temperature: float
+    # Optional Gemini-compatible custom endpoint for text generation
+    base_url: str | None = None
+    # Optional override for embeddings: when the chat provider doesn't expose
+    # an embedding model, route embed() to a different key/endpoint (typically
+    # Google's official endpoint with an official API key).
+    # If None/empty, embed() reuses (api_key, base_url).
+    embedding_api_key: str | None = None
+    embedding_base_url: str | None = None
 
 
 @dataclass
@@ -64,10 +72,14 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     llm = LLMConfig(
         filter_model=llm_raw.get("filter_model", "gemini-2.5-flash"),
         reader_model=llm_raw.get("reader_model", "gemini-2.5-pro"),
-        embedding_model=llm_raw.get("embedding_model", "text-embedding-004"),
+        embedding_model=os.environ.get("GEMINI_EMBEDDING_MODEL")
+        or llm_raw.get("embedding_model", "text-embedding-004"),
         api_key=os.environ.get("GEMINI_API_KEY", ""),
         max_concurrent=llm_raw.get("max_concurrent", 5),
         temperature=llm_raw.get("temperature", 0.3),
+        base_url=os.environ.get("GEMINI_BASE_URL") or None,
+        embedding_api_key=os.environ.get("GEMINI_EMBEDDING_API_KEY") or None,
+        embedding_base_url=os.environ.get("GEMINI_EMBEDDING_BASE_URL") or None,
     )
 
     scraper_raw = raw.get("scraper", {})
