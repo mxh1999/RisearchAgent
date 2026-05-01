@@ -1,19 +1,12 @@
 """Spec rule catalog.
 
-M1 subset:
-  - read_paper_budget (budget enforcement)
-  - no_repeated_exact_action (anti-loop)
-  - deadlock_abort (escape hatch for rule deadlock)
+M1: read_paper_budget, no_repeated_exact_action, deadlock_abort.
+M2: action_budget, query_diversity, query_must_be_specific_after_warmup.
+M3: force_cluster_refresh_on_pool_growth.
+M4: no_premature_stop_saturation, no_premature_stop_coverage,
+    require_coverage_audit_before_stop, deadlock_escalate.
 
-M2 additions:
-  - action_budget (hard stop on total action count — safe early-stopping
-    for real runs before saturation-based stop rules land in M4)
-
-Remaining rules (time_budget, query_diversity, query_must_be_specific_after_warmup,
-no_premature_stop_saturation, no_premature_stop_coverage,
-force_cluster_refresh_on_pool_growth, require_coverage_audit_before_stop,
-deadlock_escalate) arrive in later milestones as their state dependencies
-(clustering, coverage audit, query embeddings) are built.
+Remaining (time_budget) arrives later as its state hook lands.
 """
 
 from __future__ import annotations
@@ -30,10 +23,13 @@ from src.explore.actions import (
 )
 from src.explore.spec.constants import (
     DEADLOCK_ABORT_THRESHOLD,
+    DEADLOCK_ESCALATE_THRESHOLD,
     FORCE_CLUSTER_REFRESH_DELTA,
     QUERY_DIVERSITY_THRESHOLD,
     QUERY_WARMUP_POOL_SIZE,
     READ_PAPER_BUDGET_DEFAULT,
+    SATURATION_RATIO_THRESHOLD,
+    SATURATION_WINDOW,
 )
 from src.explore.spec.evaluator import Verdict
 
@@ -84,6 +80,30 @@ def _action_is_not_cluster_refresh(state, action) -> bool:
 
 def _pool_grew_since_last_refresh(state, action) -> bool:
     return state.papers_since_last_cluster_refresh() >= FORCE_CLUSTER_REFRESH_DELTA
+
+
+def _not_saturated(state, action) -> bool:
+    return not state.is_saturated
+
+
+def _coverage_report_fails(state, action) -> bool:
+    """Coverage audit ran but didn't pass.
+
+    NB: deliberately split from `coverage_report is None` so this rule and
+    REQUIRE_COVERAGE_AUDIT_BEFORE_STOP fire on disjoint conditions.
+    """
+    return (
+        state.coverage_report is not None
+        and state.coverage_report.unanswered_count > 0
+    )
+
+
+def _no_coverage_report(state, action) -> bool:
+    return state.coverage_report is None
+
+
+def _consecutive_blocked_geq_escalate(state, action) -> bool:
+    return state.consecutive_blocked_actions >= DEADLOCK_ESCALATE_THRESHOLD
 
 
 def _query_too_similar_to_recent(state, action) -> bool:
@@ -231,6 +251,109 @@ RULE_ACTION_BUDGET = Rule(
 )
 
 
+RULE_NO_PREMATURE_STOP_SATURATION = Rule(
+    name="no_premature_stop_saturation",
+    description=(
+        f"Block StopAction when the pool is not yet saturated "
+        f"(new_paper_ratio over last {SATURATION_WINDOW} queries >= "
+        f"{SATURATION_RATIO_THRESHOLD})."
+    ),
+    applies_to=[StopAction],
+    predicates=[_not_saturated],
+    verdict_fn=lambda state, action: Verdict(
+        kind="block",
+        rule_name="no_premature_stop_saturation",
+        feedback=(
+            f"Not saturated yet. new_paper_ratio over last "
+            f"{SATURATION_WINDOW} queries = "
+            f"{state.new_paper_ratio_last_n_rounds(SATURATION_WINDOW):.2f}, "
+            f"target < {SATURATION_RATIO_THRESHOLD:.2f}. Keep exploring "
+            f"(targeted searches, classic_lookup, fetch_citations on hubs)."
+        ),
+    ),
+    severity=8,
+    fail_policy="abort",
+)
+
+
+RULE_NO_PREMATURE_STOP_COVERAGE = Rule(
+    name="no_premature_stop_coverage",
+    description=(
+        "Block StopAction when coverage_audit ran but unanswered_count > 0. "
+        "(The 'never ran' case is handled by REQUIRE_COVERAGE_AUDIT_BEFORE_STOP.)"
+    ),
+    applies_to=[StopAction],
+    predicates=[_coverage_report_fails],
+    verdict_fn=lambda state, action: Verdict(
+        kind="block",
+        rule_name="no_premature_stop_coverage",
+        feedback=(
+            f"Coverage audit reports {state.coverage_report.unanswered_count} "
+            f"unanswered question(s). Fill the gaps then re-audit. "
+            f"Gaps: "
+            + " | ".join(
+                q.gap_description
+                for q in (state.coverage_report.questions if state.coverage_report else [])
+                if not q.answer_available and q.gap_description
+            )
+        ),
+    ),
+    severity=8,
+    fail_policy="abort",
+)
+
+
+RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP = Rule(
+    name="require_coverage_audit_before_stop",
+    description=(
+        "When StopAction is proposed but coverage_audit has never been run, "
+        "rewrite the action to a CoverageAuditAction so the audit runs before "
+        "any stop decision."
+    ),
+    applies_to=[StopAction],
+    predicates=[_no_coverage_report],
+    verdict_fn=lambda state, action: Verdict(
+        kind="rewrite",
+        rule_name="require_coverage_audit_before_stop",
+        feedback=(
+            "No coverage_audit on record. Running an audit first to surface "
+            "any uncovered sub-areas before allowing stop."
+        ),
+        rewritten_action=CoverageAuditAction(
+            reasoning="forced rewrite from stop by require_coverage_audit_before_stop"
+        ),
+    ),
+    severity=9,
+    fail_policy="abort",
+)
+
+
+RULE_DEADLOCK_ESCALATE = Rule(
+    name="deadlock_escalate",
+    description=(
+        f"After {DEADLOCK_ESCALATE_THRESHOLD} consecutive blocked proposals, "
+        f"force a coverage_audit so the planner sees fresh structural feedback "
+        f"and can break the loop."
+    ),
+    applies_to=None,
+    predicates=[_consecutive_blocked_geq_escalate],
+    verdict_fn=lambda state, action: Verdict(
+        kind="force",
+        rule_name="deadlock_escalate",
+        feedback=(
+            f"{state.consecutive_blocked_actions} consecutive proposals blocked. "
+            f"Forcing coverage_audit to expose gaps; review the report and try a "
+            f"different angle next turn."
+        ),
+        forced_action=CoverageAuditAction(
+            reasoning="forced by deadlock_escalate after consecutive blocks"
+        ),
+    ),
+    severity=18,  # higher than block-rules but lower than deadlock_abort (25)
+    fail_policy="abort",
+)
+
+
 RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH = Rule(
     name="force_cluster_refresh_on_pool_growth",
     description=(
@@ -299,4 +422,9 @@ ALL_RULES: list[Rule] = [
     RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
     # M3 additions
     RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH,
+    # M4 additions
+    RULE_NO_PREMATURE_STOP_SATURATION,
+    RULE_NO_PREMATURE_STOP_COVERAGE,
+    RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP,
+    RULE_DEADLOCK_ESCALATE,
 ]
