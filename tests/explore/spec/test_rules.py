@@ -25,11 +25,15 @@ from src.explore.spec import (
 from src.explore.spec.rules import (
     RULE_ACTION_BUDGET,
     RULE_DEADLOCK_ABORT,
+    RULE_DEADLOCK_ESCALATE,
     RULE_FORCE_CLUSTER_REFRESH_ON_POOL_GROWTH,
+    RULE_NO_PREMATURE_STOP_COVERAGE,
+    RULE_NO_PREMATURE_STOP_SATURATION,
     RULE_NO_REPEATED_EXACT_ACTION,
     RULE_QUERY_DIVERSITY,
     RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
     RULE_READ_PAPER_BUDGET,
+    RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP,
     Rule,
 )
 from src.explore.state import ActionRecord
@@ -433,6 +437,186 @@ def test_force_cluster_refresh_does_not_force_on_refresh_itself():
 
 
 # —————————————————————————————————————————————————————————————
+# RULE_NO_PREMATURE_STOP_SATURATION  (M4)
+# —————————————————————————————————————————————————————————————
+
+
+def _state_with_query_log(*, n_results: int, n_new: int, n_queries: int = 3):
+    """State with query_log entries that drive new_paper_ratio_last_n_rounds."""
+    from src.explore.state import QueryRecord
+
+    state = make_state()
+    for i in range(n_queries):
+        state.query_log.append(
+            QueryRecord(
+                query_id=f"q-{i}",
+                turn=i + 1,
+                query_text=f"q{i}",
+                categories=[],
+                source="llm_generated",
+                n_results_raw=n_results,
+                n_new_to_pool=n_new,
+                executed_at=datetime.now(),
+            )
+        )
+    return state
+
+
+def test_saturation_blocks_stop_when_high_new_rate():
+    state = _state_with_query_log(n_results=20, n_new=10)  # ratio = 0.5
+    action = StopAction(claimed_reason="saturated", reasoning="trying to stop")
+    verdict = SpecEvaluator([RULE_NO_PREMATURE_STOP_SATURATION]).evaluate(action, state)
+    assert verdict.kind == "block"
+    assert verdict.rule_name == "no_premature_stop_saturation"
+    assert "0.50" in verdict.feedback
+
+
+def test_saturation_allows_stop_when_low_new_rate():
+    state = _state_with_query_log(n_results=20, n_new=1)  # ratio = 0.05 < 0.10
+    action = StopAction(claimed_reason="saturated", reasoning="trying to stop")
+    verdict = SpecEvaluator([RULE_NO_PREMATURE_STOP_SATURATION]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_saturation_does_not_apply_to_non_stop_actions():
+    state = _state_with_query_log(n_results=20, n_new=20)  # ratio = 1.0
+    action = SearchAction(query="any", reasoning="not a stop")
+    verdict = SpecEvaluator([RULE_NO_PREMATURE_STOP_SATURATION]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+# —————————————————————————————————————————————————————————————
+# RULE_NO_PREMATURE_STOP_COVERAGE  (M4)
+# —————————————————————————————————————————————————————————————
+
+
+def _state_with_coverage(passes: bool, unanswered: int = 1):
+    from src.explore.state import CoverageQuestion, CoverageReport
+
+    state = _state_with_query_log(n_results=20, n_new=1)  # saturated, so this rule alone applies
+    state.coverage_report = CoverageReport(
+        generated_at=datetime.now(),
+        generated_after_turn=1,
+        questions=[
+            CoverageQuestion(
+                question="test",
+                answer_available=passes,
+                evidence="test",
+                gap_description=None if passes else "needs more X",
+            )
+        ],
+        passes=passes,
+        unanswered_count=0 if passes else unanswered,
+    )
+    return state
+
+
+def test_no_premature_stop_coverage_blocks_failed_audit():
+    state = _state_with_coverage(passes=False, unanswered=2)
+    action = StopAction(claimed_reason="saturated", reasoning="trying")
+    verdict = SpecEvaluator([RULE_NO_PREMATURE_STOP_COVERAGE]).evaluate(action, state)
+    assert verdict.kind == "block"
+    assert "2 unanswered" in verdict.feedback
+
+
+def test_no_premature_stop_coverage_allows_passed_audit():
+    state = _state_with_coverage(passes=True)
+    action = StopAction(claimed_reason="saturated", reasoning="trying")
+    verdict = SpecEvaluator([RULE_NO_PREMATURE_STOP_COVERAGE]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_no_premature_stop_coverage_doesnt_fire_when_no_report():
+    """REQUIRE_COVERAGE_AUDIT_BEFORE_STOP handles the None case."""
+    state = _state_with_query_log(n_results=20, n_new=1)
+    # state.coverage_report is None
+    action = StopAction(claimed_reason="saturated", reasoning="trying")
+    verdict = SpecEvaluator([RULE_NO_PREMATURE_STOP_COVERAGE]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+# —————————————————————————————————————————————————————————————
+# RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP  (M4)
+# —————————————————————————————————————————————————————————————
+
+
+def test_require_audit_rewrites_stop_when_no_report():
+    state = _state_with_query_log(n_results=20, n_new=1)  # saturated
+    action = StopAction(claimed_reason="saturated", reasoning="trying")
+    verdict = SpecEvaluator([RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP]).evaluate(action, state)
+    assert verdict.kind == "rewrite"
+    assert verdict.rewritten_action is not None
+    assert verdict.rewritten_action.action_type == "coverage_audit"
+
+
+def test_require_audit_does_not_fire_when_report_exists():
+    state = _state_with_coverage(passes=True)
+    action = StopAction(claimed_reason="saturated", reasoning="trying")
+    verdict = SpecEvaluator([RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_no_premature_stop_coverage_and_require_audit_disjoint():
+    """No-report case: only require_audit fires (rewrite). Failed-audit case:
+    only no_premature_stop_coverage fires (block). They never both fire."""
+    rules = [RULE_NO_PREMATURE_STOP_COVERAGE, RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP]
+    action = StopAction(claimed_reason="saturated", reasoning="trying")
+
+    # Case 1: no report → rewrite
+    state_no_report = _state_with_query_log(n_results=20, n_new=1)
+    v1 = SpecEvaluator(rules).evaluate(action, state_no_report)
+    assert v1.kind == "rewrite"
+
+    # Case 2: failed audit → block
+    state_failed = _state_with_coverage(passes=False)
+    v2 = SpecEvaluator(rules).evaluate(action, state_failed)
+    assert v2.kind == "block"
+
+    # Case 3: passed audit → allow
+    state_passed = _state_with_coverage(passes=True)
+    v3 = SpecEvaluator(rules).evaluate(action, state_passed)
+    assert v3.kind == "allow"
+
+
+# —————————————————————————————————————————————————————————————
+# RULE_DEADLOCK_ESCALATE  (M4)
+# —————————————————————————————————————————————————————————————
+
+
+def test_deadlock_escalate_inactive_below_threshold():
+    state = make_state()
+    for i in range(4):  # threshold is 5
+        state.action_history.append(_blocked_record(i))
+    action = SearchAction(query="any", reasoning="test")
+    verdict = SpecEvaluator([RULE_DEADLOCK_ESCALATE]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_deadlock_escalate_forces_audit_at_threshold():
+    state = make_state()
+    for i in range(5):
+        state.action_history.append(_blocked_record(i))
+    action = SearchAction(query="any", reasoning="test")
+    verdict = SpecEvaluator([RULE_DEADLOCK_ESCALATE]).evaluate(action, state)
+    assert verdict.kind == "force"
+    assert verdict.forced_action is not None
+    assert verdict.forced_action.action_type == "coverage_audit"
+
+
+def test_deadlock_abort_beats_deadlock_escalate_at_8_blocks():
+    """At 8 consecutive blocks, both fire — abort (severity 25) wins over escalate (18)."""
+    state = make_state()
+    for i in range(8):
+        state.action_history.append(_blocked_record(i))
+    action = SearchAction(query="any", reasoning="test")
+    verdict = SpecEvaluator(
+        [RULE_DEADLOCK_ESCALATE, RULE_DEADLOCK_ABORT]
+    ).evaluate(action, state)
+    assert verdict.rule_name == "deadlock_abort"
+    assert verdict.forced_action.action_type == "stop"
+
+
+# —————————————————————————————————————————————————————————————
 # Arbitration: most-severe wins
 # —————————————————————————————————————————————————————————————
 
@@ -509,6 +693,11 @@ def test_all_rules_registry_contains_milestones():
         "query_must_be_specific_after_warmup",
         # M3
         "force_cluster_refresh_on_pool_growth",
+        # M4
+        "no_premature_stop_saturation",
+        "no_premature_stop_coverage",
+        "require_coverage_audit_before_stop",
+        "deadlock_escalate",
     } <= names
 
 

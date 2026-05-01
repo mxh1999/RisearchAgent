@@ -2,6 +2,11 @@
 
 These drive the orchestrator with a MockPlanner through scripted scenarios
 that exercise the spec verdicts (allow/block/force) and checkpoint logic.
+
+Each test passes a *narrow* rule set rather than ALL_RULES so the test only
+exercises the loop mechanic it claims to test (and isn't entangled with
+M4 stop-guard rules etc). End-to-end tests (test_e2e.py) drive the full
+ALL_RULES catalog with realistic state.
 """
 
 from __future__ import annotations
@@ -19,12 +24,22 @@ from src.explore.checkpoint import load_checkpoint
 from src.explore.executor import ActionExecutor
 from src.explore.orchestrator import Explorer
 from src.explore.planner import MockPlanner
-from src.explore.spec import ALL_RULES, SpecEvaluator
+from src.explore.spec import SpecEvaluator
+from src.explore.spec.rules import (
+    RULE_DEADLOCK_ABORT,
+    RULE_NO_REPEATED_EXACT_ACTION,
+    RULE_READ_PAPER_BUDGET,
+)
 from tests.explore.conftest import make_state
 
 
 @pytest.mark.asyncio
 async def test_loop_executes_script_then_stops(tmp_path: Path):
+    """Loop happy path: scripted actions run, stop terminates the loop.
+
+    Uses an empty rule set so we test the loop mechanic, not the stop-guard
+    rules (covered separately in test_rules.py and test_e2e.py).
+    """
     state = make_state(run_id="test-happy")
     script = [
         SearchAction(
@@ -44,7 +59,7 @@ async def test_loop_executes_script_then_stops(tmp_path: Path):
         state=state,
         planner=MockPlanner(script),
         executor=ActionExecutor(),
-        evaluator=SpecEvaluator(ALL_RULES),
+        evaluator=SpecEvaluator([]),  # no rules: pure loop mechanic
         checkpoint_dir=tmp_path,
     )
     final = await explorer.run()
@@ -58,6 +73,7 @@ async def test_loop_executes_script_then_stops(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_loop_blocks_read_paper_over_budget(tmp_path: Path):
+    """Spec block path: read_paper rule fires, planner adapts on next turn."""
     state = make_state(read_papers_used=3, read_paper_budget=3)
     script = [
         ReadPaperAction(
@@ -77,12 +93,12 @@ async def test_loop_blocks_read_paper_over_budget(tmp_path: Path):
         state=state,
         planner=MockPlanner(script),
         executor=ActionExecutor(),
+        evaluator=SpecEvaluator([RULE_READ_PAPER_BUDGET]),
         checkpoint_dir=tmp_path,
     )
     final = await explorer.run()
 
     assert final.metadata.status == "completed"
-    # 3 history entries: 1 blocked + 2 executed
     assert len(final.action_history) == 3
     assert final.action_history[0].was_executed is False
     assert final.action_history[0].spec_verdict == "block"
@@ -92,12 +108,13 @@ async def test_loop_blocks_read_paper_over_budget(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_loop_force_stops_on_deadlock(tmp_path: Path):
-    """After 8 consecutive identical repeated actions (all blocked), deadlock_abort fires."""
+    """After 8 consecutive identical repeated actions (all blocked), deadlock_abort fires.
+
+    Uses only no_repeated + deadlock_abort to isolate the deadlock mechanic from
+    M4's deadlock_escalate (which would intervene at 5 blocks).
+    """
     state = make_state()
 
-    # Script: same action repeated 10 times. After turn 1 executes, turn 2+ blocks
-    # by no_repeated_exact_action, building up consecutive_blocked count until
-    # deadlock_abort (>=8) fires and forces stop.
     identical = SearchAction(
         query="same query repeated",
         reasoning="test: identical action proposed repeatedly to trigger deadlock",
@@ -107,18 +124,19 @@ async def test_loop_force_stops_on_deadlock(tmp_path: Path):
         state=state,
         planner=MockPlanner(script),
         executor=ActionExecutor(),
+        evaluator=SpecEvaluator(
+            [RULE_NO_REPEATED_EXACT_ACTION, RULE_DEADLOCK_ABORT]
+        ),
         checkpoint_dir=tmp_path,
     )
     final = await explorer.run()
 
     assert final.metadata.status == "completed"
     assert final.metadata.termination_reason == "budget_exhausted"
-    # First was executed; then 8 blocked; then deadlock_abort forces stop
     executed = [r for r in final.action_history if r.was_executed]
     blocked = [r for r in final.action_history if not r.was_executed]
     assert len(executed) == 2  # first search + forced stop
     assert len(blocked) == 8
-    # The forcing action record has spec_verdict=force
     force_records = [r for r in final.action_history if r.spec_verdict == "force"]
     assert len(force_records) == 1
     assert force_records[0].action.action_type == "stop"
@@ -135,11 +153,11 @@ async def test_checkpoint_roundtrip(tmp_path: Path):
         state=state,
         planner=MockPlanner(script),
         executor=ActionExecutor(),
+        evaluator=SpecEvaluator([]),  # focused on serialization, not rules
         checkpoint_dir=tmp_path,
     )
     final = await explorer.run()
 
-    # Read the checkpoint back
     path = tmp_path / "roundtrip-test.json"
     assert path.exists()
     reloaded = load_checkpoint(path)
@@ -147,7 +165,6 @@ async def test_checkpoint_roundtrip(tmp_path: Path):
     assert reloaded.metadata.run_id == final.metadata.run_id
     assert reloaded.metadata.status == "completed"
     assert len(reloaded.action_history) == len(final.action_history)
-    # Action types survive the roundtrip
     assert [r.action.action_type for r in reloaded.action_history] == [
         r.action.action_type for r in final.action_history
     ]
