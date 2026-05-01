@@ -15,13 +15,11 @@ Run with: pytest -m llm
 
 from __future__ import annotations
 
-import os
 from datetime import date, datetime
 from typing import Iterable
 
 import pytest
 
-from src.config import LLMConfig
 from src.explore.actions import (
     FetchCitationsAction,
     FetchRelatedAction,
@@ -31,7 +29,6 @@ from src.explore.actions import (
 )
 from src.explore.planner import LLMPlanner, LLMPlannerError
 from src.explore.state import PaperRecord
-from src.llm.gemini_client import GeminiClient
 from tests.explore.conftest import make_state
 
 
@@ -41,35 +38,6 @@ pytestmark = pytest.mark.llm
 # —————————————————————————————————————————————————————————————
 # Fixtures
 # —————————————————————————————————————————————————————————————
-
-
-@pytest.fixture
-def llm_client():
-    """Build a GeminiClient from the user's .env.
-
-    Function-scoped because GeminiClient.__init__ creates an asyncio.Semaphore
-    bound to the current event loop, and pytest-asyncio uses a fresh loop
-    per test by default.
-
-    Skipped if GEMINI_API_KEY is missing.
-    """
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        pytest.skip("GEMINI_API_KEY not set")
-
-    return GeminiClient(
-        LLMConfig(
-            filter_model="gemini-2.5-flash",
-            reader_model="gemini-2.5-pro",
-            embedding_model="gemini-embedding-001",
-            api_key=api_key,
-            max_concurrent=3,
-            temperature=0.3,
-        )
-    )
 
 
 @pytest.fixture

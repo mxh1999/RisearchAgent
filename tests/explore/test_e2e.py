@@ -17,12 +17,10 @@ Marked @pytest.mark.llm (combines network + LLM) so it's skipped by default.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-from src.config import LLMConfig
 from src.explore.crawl import ExplorerSearcher
 from src.explore.embeddings import EmbeddingStore
 from src.explore.executor import ActionExecutor
@@ -34,27 +32,6 @@ from tests.explore.conftest import make_state
 
 
 pytestmark = [pytest.mark.llm, pytest.mark.network]
-
-
-@pytest.fixture
-def llm_client():
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        pytest.skip("GEMINI_API_KEY not set")
-
-    return GeminiClient(
-        LLMConfig(
-            filter_model="gemini-2.5-flash",
-            reader_model="gemini-2.5-pro",
-            embedding_model="gemini-embedding-001",
-            api_key=api_key,
-            max_concurrent=3,
-            temperature=0.3,
-        )
-    )
 
 
 async def test_e2e_short_run_completes_and_populates_pool(

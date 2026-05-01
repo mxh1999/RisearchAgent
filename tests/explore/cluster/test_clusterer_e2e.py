@@ -11,14 +11,12 @@ Cost: ~25 embed calls (sub-cent) + 1 Flash labeling call (~$0.005).
 
 from __future__ import annotations
 
-import os
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from src.config import LLMConfig
 from src.explore.cluster import Clusterer
 from src.explore.embeddings import EmbeddingStore
 from src.explore.state import PaperRecord
@@ -27,26 +25,6 @@ from tests.explore.conftest import make_state
 
 
 pytestmark = pytest.mark.llm
-
-
-@pytest.fixture
-def llm_client():
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key:
-        pytest.skip("GEMINI_API_KEY not set")
-    return GeminiClient(
-        LLMConfig(
-            filter_model="gemini-2.5-flash",
-            reader_model="gemini-2.5-pro",
-            embedding_model="gemini-embedding-001",
-            api_key=api_key,
-            max_concurrent=3,
-            temperature=0.3,
-        )
-    )
 
 
 def _paper(aid: str, title: str, abstract: str) -> PaperRecord:
