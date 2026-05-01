@@ -1,12 +1,17 @@
 """Action executor: handles each Action type's side effects on state.
 
-Dependencies (searcher, embeddings) are injected at construction time. When
-omitted, handlers fall back to stub behavior — this keeps the M1 test path
-and any future dry-run mode working without touching the network.
+Dependencies (searcher, embeddings, clusterer, llm) are injected at
+construction time. When omitted, handlers fall back to stub behavior —
+this keeps the M1 test path and any future dry-run mode working without
+touching the network.
 
-M2 implements search and its side effects (embedding + paper_pool update).
-Other actions remain stubs until their own milestone (M3 clustering, M4
-coverage audit, M6 citations, M7 read_paper).
+Implemented per milestone:
+  - M2: search (real ArXiv + embeddings + counter side effects)
+  - M3: cluster_refresh (real Clusterer)
+  - M4: skim_abstract (Flash extract; updates paper.skim + benchmark_counter)
+  - M4: coverage_audit (deterministic structural check; no LLM)
+
+Other actions are stubs until their milestone (M6 citations, M7 read_paper).
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ if TYPE_CHECKING:
     from src.explore.crawl import ExplorerSearcher
     from src.explore.embeddings import EmbeddingStore
     from src.explore.state import ExplorationState
+    from src.llm.gemini_client import GeminiClient
 
 
 logger = logging.getLogger(__name__)
@@ -65,10 +71,12 @@ class ActionExecutor:
         searcher: Optional["ExplorerSearcher"] = None,
         embeddings: Optional["EmbeddingStore"] = None,
         clusterer: Optional["Clusterer"] = None,
+        llm: Optional["GeminiClient"] = None,
     ):
         self.searcher = searcher
         self.embeddings = embeddings
         self.clusterer = clusterer
+        self.llm = llm
 
     async def execute(
         self, action: "Action", state: "ExplorationState"
@@ -129,12 +137,13 @@ class ActionExecutor:
             # Also store the query itself (for diversity checks later)
             query_embedding_id = await self.embeddings.add_query(query_id, action.query)
 
-        # 4. Insert into paper_pool.
+        # 4. Insert into paper_pool + update author / venue counters.
         # Use state.turn+1 because this action's turn increments *after* executor returns.
         action_turn = state.turn + 1
         for r in new_papers:
-            state.paper_pool[r["arxiv_id"]] = PaperRecord(
-                arxiv_id=r["arxiv_id"],
+            aid = r["arxiv_id"]
+            state.paper_pool[aid] = PaperRecord(
+                arxiv_id=aid,
                 title=r["title"],
                 abstract=r["abstract"],
                 authors=r["authors"],
@@ -144,9 +153,15 @@ class ActionExecutor:
                 first_seen_turn=action_turn,
                 source="search",
                 source_query_id=query_id,
-                embedding_id=embed_map.get(r["arxiv_id"]),
+                embedding_id=embed_map.get(aid),
                 is_noise=False,
             )
+            # author_counter: count first 3 authors per paper to deweight long lists
+            for author in r["authors"][:3]:
+                state.counters.author_counter.setdefault(author, []).append(aid)
+            # venue_counter: bucket by published year (cheap proxy for venue)
+            year_bucket = str(r["published"].year)
+            state.counters.venue_counter.setdefault(year_bucket, []).append(aid)
 
         # 5. Record QueryRecord
         state.query_log.append(
@@ -244,9 +259,56 @@ class ActionExecutor:
         )
 
     async def _handle_skim_abstract(self, action: SkimAbstractAction, state):
+        from src.explore.skim import skim_paper
+
+        if self.llm is None:
+            return ActionResult(
+                success=True,
+                summary=f"[stub] skim_abstract: {action.arxiv_id} (no llm wired)",
+                details={"stub": True},
+            )
+
+        paper = state.paper_pool.get(action.arxiv_id)
+        if paper is None:
+            return ActionResult(
+                success=False,
+                summary=f"skim_abstract: {action.arxiv_id} not in paper_pool",
+                error="paper_not_in_pool",
+            )
+
+        skim = await skim_paper(paper, self.llm)
+        if skim is None:
+            return ActionResult(
+                success=False,
+                summary=f"skim_abstract: {action.arxiv_id} parse failed",
+                error="skim_parse_failed",
+            )
+
+        # Update paper.skim
+        paper.skim = skim
+
+        # Update benchmark_counter (per-benchmark inverted index)
+        for bench in skim.benchmarks:
+            # Cheap canonicalization: trim + casefold for the index key
+            key = bench.strip()
+            if not key:
+                continue
+            ids = state.counters.benchmark_counter.setdefault(key, [])
+            if action.arxiv_id not in ids:
+                ids.append(action.arxiv_id)
+
         return ActionResult(
             success=True,
-            summary=f"[stub] skim_abstract: {action.arxiv_id} (M4)",
+            summary=(
+                f"skim_abstract: {action.arxiv_id} -> "
+                f"benchmarks={len(skim.benchmarks)}, methods={len(skim.methods)}, "
+                f"keywords={len(skim.keywords)}"
+            ),
+            details={
+                "n_benchmarks": len(skim.benchmarks),
+                "n_methods": len(skim.methods),
+                "n_keywords": len(skim.keywords),
+            },
         )
 
     async def _handle_read_paper(self, action: ReadPaperAction, state):
@@ -259,9 +321,27 @@ class ActionExecutor:
         )
 
     async def _handle_coverage_audit(self, action: CoverageAuditAction, state):
+        from src.explore.coverage import run_coverage_audit
+
+        report = run_coverage_audit(state)
+        state.coverage_report = report
+
+        gaps = [
+            q.gap_description
+            for q in report.questions
+            if not q.answer_available and q.gap_description
+        ]
         return ActionResult(
             success=True,
-            summary="[stub] coverage_audit: no-op (M4)",
+            summary=(
+                f"coverage_audit: passes={report.passes}, "
+                f"unanswered={report.unanswered_count}/{len(report.questions)}"
+            ),
+            details={
+                "passes": report.passes,
+                "unanswered_count": report.unanswered_count,
+                "gaps": gaps,
+            },
         )
 
     async def _handle_stop(self, action: StopAction, state):
