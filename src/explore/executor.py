@@ -1,17 +1,18 @@
 """Action executor: handles each Action type's side effects on state.
 
-Dependencies (searcher, embeddings, clusterer, llm) are injected at
-construction time. When omitted, handlers fall back to stub behavior —
-this keeps the M1 test path and any future dry-run mode working without
-touching the network.
+Dependencies (searcher, embeddings, clusterer, llm, citation_provider)
+are injected at construction time. When omitted, handlers fall back to
+stub / null behavior — this keeps the M1 test path and any future dry-run
+mode working without touching the network.
 
 Implemented per milestone:
   - M2: search (real ArXiv + embeddings + counter side effects)
   - M3: cluster_refresh (real Clusterer)
   - M4: skim_abstract (Flash extract; updates paper.skim + benchmark_counter)
   - M4: coverage_audit (deterministic structural check; no LLM)
+  - M6: fetch_citations + fetch_related (Semantic Scholar)
 
-Other actions are stubs until their milestone (M6 citations, M7 read_paper).
+Other actions are stubs until their milestone (M7 read_paper).
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from src.explore.state import LLMCallRecord, PaperRecord, QueryRecord
 
 if TYPE_CHECKING:
     from src.explore.actions import Action
+    from src.explore.citations import CitationProvider, RelatedPaper
     from src.explore.cluster import Clusterer
     from src.explore.crawl import ExplorerSearcher
     from src.explore.embeddings import EmbeddingStore
@@ -72,11 +74,13 @@ class ActionExecutor:
         embeddings: Optional["EmbeddingStore"] = None,
         clusterer: Optional["Clusterer"] = None,
         llm: Optional["GeminiClient"] = None,
+        citations: Optional["CitationProvider"] = None,
     ):
         self.searcher = searcher
         self.embeddings = embeddings
         self.clusterer = clusterer
         self.llm = llm
+        self.citations = citations
 
     async def execute(
         self, action: "Action", state: "ExplorationState"
@@ -202,16 +206,167 @@ class ActionExecutor:
         )
 
     async def _handle_fetch_citations(self, action: FetchCitationsAction, state):
+        if self.citations is None or not self.citations.is_available():
+            return ActionResult(
+                success=True,
+                summary=(
+                    f"[stub] fetch_citations: {action.arxiv_id} "
+                    f"(citation provider unavailable)"
+                ),
+                details={"stub": True},
+            )
+
+        related: list = []
+        if action.direction in ("references", "both"):
+            refs = await self.citations.get_references(
+                action.arxiv_id, limit=action.max_results
+            )
+            related.extend(refs)
+        if action.direction in ("cited_by", "both"):
+            cits = await self.citations.get_citations(
+                action.arxiv_id, limit=action.max_results
+            )
+            related.extend(cits)
+
+        n_added = await self._ingest_related(
+            related, source="citation_expansion", source_paper_id=action.arxiv_id, state=state
+        )
         return ActionResult(
             success=True,
-            summary=f"[stub] fetch_citations: {action.arxiv_id} ({action.direction})",
+            summary=(
+                f"fetch_citations({action.direction}): {action.arxiv_id} → "
+                f"+{n_added} papers ({len(related)} returned)"
+            ),
+            details={
+                "n_returned": len(related),
+                "n_new": n_added,
+                "direction": action.direction,
+                "source_paper_id": action.arxiv_id,
+            },
         )
 
     async def _handle_fetch_related(self, action: FetchRelatedAction, state):
+        if self.citations is None or not self.citations.is_available():
+            return ActionResult(
+                success=True,
+                summary=(
+                    f"[stub] fetch_related: {action.arxiv_id} "
+                    f"(citation provider unavailable)"
+                ),
+                details={"stub": True},
+            )
+
+        related = await self.citations.get_related(
+            action.arxiv_id, limit=action.max_results
+        )
+        n_added = await self._ingest_related(
+            related, source="related", source_paper_id=action.arxiv_id, state=state
+        )
         return ActionResult(
             success=True,
-            summary=f"[stub] fetch_related: {action.arxiv_id}",
+            summary=f"fetch_related: {action.arxiv_id} → +{n_added} papers ({len(related)} returned)",
+            details={
+                "n_returned": len(related),
+                "n_new": n_added,
+                "source_paper_id": action.arxiv_id,
+            },
         )
+
+    # —————————————————————————————————————————————————————
+    # Shared ingest path for citation/related results
+    # —————————————————————————————————————————————————————
+
+    async def _ingest_related(
+        self,
+        related: list["RelatedPaper"],
+        *,
+        source: str,
+        source_paper_id: str,
+        state: "ExplorationState",
+    ) -> int:
+        """Add new papers from a citation/related lookup to paper_pool.
+
+        Skips papers without arxiv_id or without an abstract (we can't embed
+        them, and they'd pollute the pool).
+
+        Returns the count of papers added (post-dedup).
+        """
+        from datetime import date as _date
+        from datetime import datetime as _datetime
+        from src.explore.state import QueryRecord
+
+        action_turn = state.turn + 1
+
+        # Filter usable entries: must have arxiv_id, title, abstract.
+        candidates = [
+            rp
+            for rp in related
+            if rp.arxiv_id and rp.title and rp.abstract
+            and rp.arxiv_id not in state.paper_pool
+        ]
+        if not candidates:
+            return 0
+
+        # Embed (if configured) — batched
+        embed_map: dict[str, str] = {}
+        if self.embeddings is not None:
+            embed_payload = [
+                {
+                    "arxiv_id": rp.arxiv_id,
+                    "title": rp.title,
+                    "abstract": rp.abstract,
+                }
+                for rp in candidates
+            ]
+            embed_ids = await self.embeddings.add_papers(embed_payload)
+            embed_map = dict(zip((rp.arxiv_id for rp in candidates), embed_ids))
+
+        # Build a QueryRecord so saturation/turn tracking sees this batch too.
+        query_id = f"q-{source[:3]}-{uuid.uuid4().hex[:6]}"
+        # Map our "source" (paper.source) to QueryRecord.source
+        qr_source = "citation_seeded" if source == "citation_expansion" else "author_seeded"
+        # NB: "related" maps to "author_seeded" only as a coarse bucket; SS related
+        # isn't truly author-seeded but the QueryRecord enum doesn't have a 'related'
+        # variant. This is a small modeling debt — not worth a schema bump in M6.
+
+        for rp in candidates:
+            published = _date(rp.year, 1, 1) if rp.year else _date(2024, 1, 1)
+            state.paper_pool[rp.arxiv_id] = PaperRecord(
+                arxiv_id=rp.arxiv_id,
+                title=rp.title,
+                abstract=rp.abstract or "",
+                authors=rp.authors or [],
+                published=published,
+                categories=[],  # SS doesn't return ArXiv categories
+                pdf_url=f"https://arxiv.org/pdf/{rp.arxiv_id}",
+                first_seen_turn=action_turn,
+                source=source,  # "citation_expansion" or "related"
+                source_query_id=query_id,
+                source_paper_id=source_paper_id,
+                embedding_id=embed_map.get(rp.arxiv_id),
+                citation_count=rp.citation_count,
+                citation_data_fetched_at=_datetime.now() if rp.citation_count is not None else None,
+                is_noise=False,
+            )
+            for author in (rp.authors or [])[:3]:
+                state.counters.author_counter.setdefault(author, []).append(rp.arxiv_id)
+            state.counters.venue_counter.setdefault(str(published.year), []).append(rp.arxiv_id)
+
+        state.query_log.append(
+            QueryRecord(
+                query_id=query_id,
+                turn=action_turn,
+                query_text=f"<{source}:{source_paper_id}>",
+                categories=[],
+                source=qr_source,
+                targeted_cluster_slug=None,
+                query_embedding_id=None,
+                n_results_raw=len(related),
+                n_new_to_pool=len(candidates),
+                executed_at=_datetime.now(),
+            )
+        )
+        return len(candidates)
 
     async def _handle_cluster_refresh(self, action: ClusterRefreshAction, state):
         if self.clusterer is None:
