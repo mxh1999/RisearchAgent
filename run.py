@@ -124,73 +124,208 @@ async def cmd_sota(config):
         print()
 
 
-def cmd_onboard(args):
-    """Interactive onboarding: set up research profile via conversation."""
+def _build_llm_config_from_env(config_path: str) -> "LLMConfig":
+    """Build an LLMConfig that works whether or not config.yaml exists yet.
+
+    The new explore/synthesize/configure stages run BEFORE config.yaml is
+    written, so we can't depend on load_config(). Read from env first,
+    then merge any per-key override from config.yaml if it happens to
+    exist already (e.g. on a refine).
+    """
     import os
     from pathlib import Path
-
+    import yaml
     from dotenv import load_dotenv
-
     from src.config import LLMConfig
-    from src.onboard.advisor import ResearchAdvisor
 
     load_dotenv()
-
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         print("Error: GEMINI_API_KEY environment variable not set.")
         sys.exit(1)
 
-    # Minimal config - only need LLM settings for onboarding
-    config_path = args.config
-    llm_config = LLMConfig(
-        filter_model="gemini-2.5-flash",
-        reader_model="gemini-2.5-pro",
-        embedding_model="gemini-embedding-001",
+    cfg = {
+        "filter_model": os.environ.get("GEMINI_FILTER_MODEL", "gemini-3-flash"),
+        "reader_model": os.environ.get("GEMINI_READER_MODEL", "gemini-2.5-pro"),
+        "embedding_model": os.environ.get(
+            "GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"
+        ),
+        "max_concurrent": 5,
+        "temperature": 0.3,
+    }
+    cfg_path = Path(config_path)
+    if cfg_path.exists():
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        for k, v in (raw.get("llm") or {}).items():
+            if k in cfg:
+                cfg[k] = v
+
+    return LLMConfig(
+        filter_model=cfg["filter_model"],
+        reader_model=cfg["reader_model"],
+        embedding_model=cfg["embedding_model"],
         api_key=api_key,
-        max_concurrent=5,
-        temperature=0.3,
+        max_concurrent=cfg["max_concurrent"],
+        temperature=cfg["temperature"],
+        base_url=os.environ.get("GEMINI_BASE_URL") or None,
+        embedding_api_key=os.environ.get("GEMINI_EMBEDDING_API_KEY") or None,
+        embedding_base_url=os.environ.get("GEMINI_EMBEDDING_BASE_URL") or None,
     )
 
-    # If config.yaml exists, load LLM settings from it
-    config_file = Path(config_path)
-    if config_file.exists():
-        import yaml
 
-        with open(config_file, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-        llm_raw = raw.get("llm", {})
-        llm_config = LLMConfig(
-            filter_model=llm_raw.get("filter_model", llm_config.filter_model),
-            reader_model=llm_raw.get("reader_model", llm_config.reader_model),
-            embedding_model=llm_raw.get("embedding_model", llm_config.embedding_model),
-            api_key=api_key,
-            max_concurrent=llm_raw.get("max_concurrent", llm_config.max_concurrent),
-            temperature=llm_raw.get("temperature", llm_config.temperature),
-        )
+async def cmd_explore(args):
+    """Stage A: run Explorer with the user's intent. Persists state.json."""
+    from src.explore.runner import run_explore, state_path
 
-    # Load existing profile for --refine mode
-    existing_profile = None
-    if args.refine and config_file.exists():
-        import yaml
+    llm_config = _build_llm_config_from_env(args.config)
 
-        with open(config_file, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-        topics = raw.get("topics", [])
-        existing_profile = {
-            "research_profile": topics[0].get("research_profile", "") if topics else "",
-            "topics": topics,
-            "relevance_threshold": raw.get("filter", {}).get("relevance_threshold", 6),
-        }
+    intent = args.intent
+    if not intent:
+        intent = input("Research intent: ").strip()
+    if not intent:
+        print("Error: empty intent.")
+        sys.exit(1)
 
-    advisor = ResearchAdvisor(
+    seed_ids = args.seed.split(",") if args.seed else None
+    seed_ids = [s.strip() for s in (seed_ids or []) if s.strip()] or None
+
+    state = await run_explore(
+        intent_text=intent,
+        seed_arxiv_ids=seed_ids,
         llm_config=llm_config,
-        config_path=config_path,
-        pdf_dir=Path(raw.get("pdf_dir", "data/pdfs") if config_file.exists() else "data/pdfs"),
-        sota_dir=Path(raw.get("sota_dir", "data/sota") if config_file.exists() else "data/sota"),
-        existing_profile=existing_profile,
+        action_budget=args.action_budget,
+        time_budget_seconds=args.time_budget,
+        read_paper_budget=args.read_budget,
+        enable_clusterer=not args.no_cluster,
+        enable_reader=args.enable_read,
     )
-    advisor.run()
+
+    sp = state_path(state.metadata.run_id)
+    print(f"\n✓ Explore complete: run_id={state.metadata.run_id}")
+    print(f"  status:  {state.metadata.status}")
+    print(f"  reason:  {state.metadata.termination_reason}")
+    print(f"  pool:    {state.pool_size} papers")
+    print(f"  turns:   {state.turn}")
+    print(f"  state:   {sp}")
+    print(f"\nNext: python run.py synthesize {state.metadata.run_id}")
+
+
+async def cmd_synthesize(args):
+    """Stage B: synthesize FieldMap from a frozen state."""
+    from src.explore.runner import (
+        load_state_for,
+        run_synthesize,
+    )
+
+    llm_config = _build_llm_config_from_env(args.config)
+    state = load_state_for(args.run_id)
+
+    fm, json_p, md_p = await run_synthesize(state=state, llm_config=llm_config)
+    print(f"\n✓ Synthesize complete: run_id={args.run_id}")
+    print(f"  sub_areas:           {len(fm.sub_areas)}")
+    print(f"  dominant_benchmarks: {len(fm.dominant_benchmarks)}")
+    print(f"  classic_baselines:   {len(fm.classic_baselines)}")
+    print(f"  open_questions:      {len(fm.open_questions)}")
+    print(f"  notes:               {len(fm.notes)}")
+    print(f"  json:    {json_p}")
+    print(f"  markdown: {md_p}")
+    print(f"\nNext: python run.py configure {args.run_id}")
+
+
+def cmd_configure(args):
+    """Stage C: present FieldMap, accept edits, write config.yaml."""
+    from pathlib import Path
+    import yaml
+    from src.configure import run_configure
+    from src.explore.runner import load_field_map_for, load_state_for
+
+    fm = load_field_map_for(args.run_id)
+    try:
+        state = load_state_for(args.run_id)
+    except Exception:
+        state = None  # OK — derive_config has a no-state fallback
+
+    config_file = Path(args.config)
+    base_config = None
+    if config_file.exists():
+        base_config = yaml.safe_load(config_file.read_text(encoding="utf-8")) or None
+
+    derived = run_configure(
+        fm=fm,
+        state=state,
+        intent_text=fm.header.intent_snippet,
+        config_path=config_file,
+        base_config=base_config,
+    )
+    if not derived:
+        sys.exit(1)
+
+
+async def cmd_onboard(args):
+    """End-to-end: explore → synthesize → configure. The user-friendly path.
+
+    Replaces the old conversational ResearchAdvisor (src/onboard/) per Q10
+    in docs/onboard-redesign/04-open-design-questions.md. The old module
+    will be removed once the new flow has been used in anger a few times.
+    """
+    from src.explore.runner import run_explore, run_synthesize
+
+    llm_config = _build_llm_config_from_env(args.config)
+
+    intent = args.intent
+    if not intent:
+        intent = input("Research intent: ").strip()
+    if not intent:
+        print("Error: empty intent.")
+        sys.exit(1)
+
+    seed_ids = args.seed.split(",") if args.seed else None
+    seed_ids = [s.strip() for s in (seed_ids or []) if s.strip()] or None
+
+    print("\n--- Stage 1/3: Explore ---")
+    state = await run_explore(
+        intent_text=intent,
+        seed_arxiv_ids=seed_ids,
+        llm_config=llm_config,
+        action_budget=args.action_budget,
+        time_budget_seconds=args.time_budget,
+        read_paper_budget=args.read_budget,
+        enable_clusterer=not args.no_cluster,
+        enable_reader=args.enable_read,
+    )
+    print(
+        f"  done: pool={state.pool_size}, turns={state.turn}, "
+        f"reason={state.metadata.termination_reason}"
+    )
+
+    print("\n--- Stage 2/3: Synthesize ---")
+    fm, json_p, md_p = await run_synthesize(state=state, llm_config=llm_config)
+    print(f"  done: {len(fm.sub_areas)} sub-areas")
+    print(f"  field map: {md_p}")
+
+    print("\n--- Stage 3/3: Configure ---")
+    # Configure is interactive — switch back to sync.
+    from pathlib import Path
+    import yaml
+    from src.configure import run_configure
+
+    config_file = Path(args.config)
+    base_config = None
+    if config_file.exists():
+        base_config = yaml.safe_load(config_file.read_text(encoding="utf-8")) or None
+
+    derived = run_configure(
+        fm=fm,
+        state=state,
+        intent_text=fm.header.intent_snippet,
+        config_path=config_file,
+        base_config=base_config,
+    )
+    if not derived:
+        print("\nOnboard incomplete (user quit at configure). State + field map were saved.")
+        sys.exit(1)
+    print("\n✓ Onboard complete.")
 
 
 async def cmd_export(config, output_path: str):
@@ -288,13 +423,65 @@ def main():
         help="Merge with existing data (upsert) instead of replacing",
     )
 
+    # —— New explore-based onboard pipeline (Q10 replacement) ——
+
+    def _add_explore_args(p):
+        p.add_argument(
+            "--seed", default=None,
+            help="Comma-separated arxiv_ids to use as seed papers (optional)",
+        )
+        p.add_argument(
+            "--action-budget", type=int, default=60,
+            help="Hard cap on planner actions (default 60)",
+        )
+        p.add_argument(
+            "--time-budget", type=int, default=900,
+            help="Wall-clock budget in seconds (default 900 = 15 min)",
+        )
+        p.add_argument(
+            "--read-budget", type=int, default=3,
+            help="Max read_paper actions per run (default 3)",
+        )
+        p.add_argument(
+            "--no-cluster", action="store_true",
+            help="Disable clustering (skips cluster_refresh actions; debug-only)",
+        )
+        p.add_argument(
+            "--enable-read", action="store_true",
+            help="Enable read_paper deep-reading (off by default; expensive Pro calls)",
+        )
+
+    explore_parser = subparsers.add_parser(
+        "explore",
+        help="Run autonomous Explorer to survey a research field",
+    )
+    explore_parser.add_argument(
+        "intent", nargs="?", default=None,
+        help="Research intent (prompted interactively if omitted)",
+    )
+    _add_explore_args(explore_parser)
+
+    syn_parser = subparsers.add_parser(
+        "synthesize",
+        help="Synthesize FieldMap from a completed exploration",
+    )
+    syn_parser.add_argument("run_id", help="Run ID from a previous explore")
+
+    cfg_parser = subparsers.add_parser(
+        "configure",
+        help="Interactively configure config.yaml from a synthesized FieldMap",
+    )
+    cfg_parser.add_argument("run_id", help="Run ID from a previous synthesize")
+
     onboard_parser = subparsers.add_parser(
-        "onboard", help="Interactive onboarding: set up research profile"
+        "onboard",
+        help="Full onboard: explore → synthesize → configure",
     )
     onboard_parser.add_argument(
-        "--refine", action="store_true",
-        help="Refine existing profile instead of starting fresh",
+        "intent", nargs="?", default=None,
+        help="Research intent (prompted interactively if omitted)",
     )
+    _add_explore_args(onboard_parser)
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -303,8 +490,20 @@ def main():
         parser.print_help()
         sys.exit(1)
 
+    # The new onboard / explore / synthesize / configure commands DON'T
+    # need a config.yaml to exist — they're the path that creates it. Run
+    # them without going through load_config().
     if args.command == "onboard":
-        cmd_onboard(args)
+        asyncio.run(cmd_onboard(args))
+        return
+    if args.command == "explore":
+        asyncio.run(cmd_explore(args))
+        return
+    if args.command == "synthesize":
+        asyncio.run(cmd_synthesize(args))
+        return
+    if args.command == "configure":
+        cmd_configure(args)  # synchronous (interactive input)
         return
 
     config = load_config(args.config)
