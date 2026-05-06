@@ -6,6 +6,16 @@ import asyncio
 import logging
 import sys
 
+# Force UTF-8 stdout/stderr so unicode glyphs (✓ ⚠ ─ etc) used by the
+# explore / configure commands don't crash on Windows GBK consoles.
+for _stream_name in ("stdout", "stderr"):
+    _s = getattr(sys, _stream_name, None)
+    if _s is not None and hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 from src.config import load_config
 from src.pipeline.orchestrator import PipelineOrchestrator
 
@@ -157,8 +167,13 @@ def _build_llm_config_from_env(config_path: str) -> "LLMConfig":
     if cfg_path.exists():
         with open(cfg_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
+        # Env vars take precedence over config.yaml values for the new
+        # explore flow — config.yaml may have stale model names from the
+        # old onboard (e.g. gemini-2.5-flash that some providers don't carry).
         for k, v in (raw.get("llm") or {}).items():
-            if k in cfg:
+            if k in cfg and k not in (
+                "filter_model", "reader_model", "embedding_model",
+            ):
                 cfg[k] = v
 
     return LLMConfig(

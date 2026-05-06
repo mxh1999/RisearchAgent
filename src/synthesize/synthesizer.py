@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 _FIELD_MAP_ADAPTER: TypeAdapter[FieldMap] = TypeAdapter(FieldMap)
 
 
+def _strip_code_fences(text: str) -> str:
+    """Strip leading/trailing ```json ... ``` markdown fences if present.
+
+    Same defensive parser as planner.py — Pro occasionally wraps JSON in
+    fences even with response_mime_type=application/json.
+    """
+    s = text.strip()
+    if not s:
+        return s
+    if s.startswith("```"):
+        first_newline = s.find("\n")
+        if first_newline != -1:
+            s = s[first_newline + 1:]
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()
+            s = s[: -3].rstrip()
+    return s
+
+
 class SynthesisError(RuntimeError):
     """Raised when the LLM output can't be turned into a valid FieldMap."""
 
@@ -143,7 +162,15 @@ async def synthesize(
             user_prompt = _build_user_prompt(state)
             full_prompt = f"{SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"
             raw = await llm.generate(full_prompt, model=model, json_mode=True)
-            field_map = _FIELD_MAP_ADAPTER.validate_json(raw)
+            field_map = _FIELD_MAP_ADAPTER.validate_json(_strip_code_fences(raw))
+            # Header metadata is metadata, not content — override LLM's
+            # values with the truth from state. (LLMs sometimes hallucinate
+            # a generated_at timestamp from the past; we've seen 2024 dates
+            # appear on a 2026 run.)
+            field_map.header.generated_at = datetime.now()
+            field_map.header.n_papers_surveyed = state.pool_size
+            field_map.header.n_queries = len(state.query_log)
+            field_map.header.elapsed_seconds = state.budget.elapsed_seconds
             validate_citations(field_map, state)
             return field_map
         except (ValidationError, SynthesisError) as e:

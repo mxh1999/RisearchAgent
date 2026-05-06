@@ -115,25 +115,26 @@ class EmbeddingStore:
             return 0.0
 
         # Embed the new query
-        new_emb = (await self.llm.embed([query_text]))[0]
+        new_emb = list((await self.llm.embed([query_text]))[0])
 
-        # Fetch embeddings for recent queries
-        result = self._queries.get(
-            ids=recent_query_ids, include=["embeddings"]
-        )
-        if not result["embeddings"]:
+        # Fetch embeddings for recent queries. ChromaDB ≥ 0.5 returns these
+        # as a numpy array; len(...) > 0 works for both list and ndarray
+        # while `not array` raises "ambiguous truth value".
+        result = self._queries.get(ids=recent_query_ids, include=["embeddings"])
+        embs = result.get("embeddings")
+        if embs is None or len(embs) == 0:
             return 0.0
 
         # Compute max cosine similarity manually (avoid needing scipy/numpy as hard dep here)
         import math
 
-        def cosine(a: list[float], b: list[float]) -> float:
-            dot = sum(x * y for x, y in zip(a, b))
-            na = math.sqrt(sum(x * x for x in a))
-            nb = math.sqrt(sum(x * x for x in b))
+        def cosine(a, b) -> float:
+            dot = sum(float(x) * float(y) for x, y in zip(a, b))
+            na = math.sqrt(sum(float(x) * float(x) for x in a))
+            nb = math.sqrt(sum(float(y) * float(y) for y in b))
             return dot / (na * nb) if na * nb > 0 else 0.0
 
-        return max(cosine(new_emb, e) for e in result["embeddings"])
+        return max(cosine(new_emb, e) for e in embs)
 
     # —————————————————————————————————————————————————————
     # Lifecycle

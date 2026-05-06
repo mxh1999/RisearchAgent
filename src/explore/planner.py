@@ -35,6 +35,28 @@ logger = logging.getLogger(__name__)
 _ACTION_ADAPTER: TypeAdapter = TypeAdapter(Action)
 
 
+def _strip_code_fences(text: str) -> str:
+    """Strip leading/trailing ```json ... ``` markdown fences if present.
+
+    Even with response_mime_type=application/json, Gemini Pro occasionally
+    wraps its JSON in code fences. We tolerate this rather than fail-fast
+    since the underlying content is well-formed.
+    """
+    s = text.strip()
+    if not s:
+        return s
+    if s.startswith("```"):
+        # Drop the opening fence (with optional language tag)
+        first_newline = s.find("\n")
+        if first_newline != -1:
+            s = s[first_newline + 1:]
+        # Drop trailing closing fence
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()
+            s = s[: -3].rstrip()
+    return s
+
+
 class LLMPlannerError(RuntimeError):
     """Raised when LLM output can't be parsed into a valid Action.
 
@@ -134,9 +156,10 @@ class LLMPlanner(Planner):
         )
 
         raw = await self.llm.generate(prompt, model=self.model, json_mode=True)
+        cleaned = _strip_code_fences(raw)
 
         try:
-            action = _ACTION_ADAPTER.validate_json(raw)
+            action = _ACTION_ADAPTER.validate_json(cleaned)
         except ValidationError as e:
             logger.error("[planner] malformed action JSON:\n%s\n---\n%s", e, raw)
             raise LLMPlannerError(

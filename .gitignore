@@ -31,3 +31,4 @@ Thumbs.db
 
 # Local one-off verification scripts (not part of the project)
 /scripts/
+*.bak.*
