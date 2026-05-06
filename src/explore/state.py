@@ -60,6 +60,44 @@ class SkimResult(BaseModel):
     skimmed_at: datetime
 
 
+class ExperimentMethodResult(BaseModel):
+    """One method's score on a benchmark+setting+metric tuple."""
+    model_config = ConfigDict(extra="forbid")
+
+    method_name: str
+    value: float
+    is_paper_method: bool
+
+
+class ExperimentEntry(BaseModel):
+    """All methods' results on one benchmark+setting+metric combination."""
+    model_config = ConfigDict(extra="forbid")
+
+    benchmark: str
+    setting: str = ""
+    metric: str = ""
+    higher_is_better: bool = True
+    results: list[ExperimentMethodResult] = Field(default_factory=list)
+
+
+class ExploreReading(BaseModel):
+    """The Explorer's deep-read product.
+
+    Distinct from src.models.DeepReading which lives on the main pipeline's
+    SQLite DB. Explorer stores its read inside state.paper_pool[id].explore_reading
+    and never writes to deep_readings table — Explorer reads are exploratory,
+    not authoritative.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    arxiv_id: str
+    proposed_method: str = ""
+    experimental_setup: str = ""
+    main_results: str = ""
+    benchmarks: list[ExperimentEntry] = Field(default_factory=list)
+    read_at: datetime
+
+
 class PaperRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -87,6 +125,9 @@ class PaperRecord(BaseModel):
 
     # LLM skim (from skim_abstract action)
     skim: Optional[SkimResult] = None
+
+    # Deep read (from read_paper action). Distinct from main DB DeepReading.
+    explore_reading: Optional[ExploreReading] = None
 
     # Clustering
     cluster_id: Optional[str] = None  # the cluster's slug
