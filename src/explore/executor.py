@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from src.explore.cluster import Clusterer
     from src.explore.crawl import ExplorerSearcher
     from src.explore.embeddings import EmbeddingStore
+    from src.explore.read import ExploreReader
     from src.explore.state import ExplorationState
     from src.llm.gemini_client import GeminiClient
 
@@ -75,12 +76,14 @@ class ActionExecutor:
         clusterer: Optional["Clusterer"] = None,
         llm: Optional["GeminiClient"] = None,
         citations: Optional["CitationProvider"] = None,
+        reader: Optional["ExploreReader"] = None,
     ):
         self.searcher = searcher
         self.embeddings = embeddings
         self.clusterer = clusterer
         self.llm = llm
         self.citations = citations
+        self.reader = reader
 
     async def execute(
         self, action: "Action", state: "ExplorationState"
@@ -467,12 +470,69 @@ class ActionExecutor:
         )
 
     async def _handle_read_paper(self, action: ReadPaperAction, state):
-        # Bumps the budget so the budget rule can be exercised with a stub.
+        if self.reader is None:
+            # Stub path: still bumps budget so RULE_READ_PAPER_BUDGET tests work
+            # without a real reader configured.
+            state.budget.read_papers_used += 1
+            return ActionResult(
+                success=True,
+                summary=(
+                    f"[stub] read_paper: {action.arxiv_id} "
+                    f"(no reader wired; read_papers_used now "
+                    f"{state.budget.read_papers_used})"
+                ),
+                details={"stub": True},
+            )
+
+        paper = state.paper_pool.get(action.arxiv_id)
+        if paper is None:
+            return ActionResult(
+                success=False,
+                summary=f"read_paper: {action.arxiv_id} not in paper_pool",
+                error="paper_not_in_pool",
+            )
+
+        # Budget consumed regardless of read success — prevents retry storms
+        # on a paper whose PDF is broken or whose reader trips repeatedly.
         state.budget.read_papers_used += 1
+
+        explore_reading = await self.reader.read(paper)
+        if explore_reading is None:
+            return ActionResult(
+                success=False,
+                summary=f"read_paper: {action.arxiv_id} read failed",
+                error="read_failed",
+            )
+
+        # Persist on the paper record
+        paper.explore_reading = explore_reading
+        if "deep_read_candidate" in paper.flags:
+            paper.flags.remove("deep_read_candidate")
+
+        # Update benchmark_counter from the extracted experiments — same
+        # canonicalization as skim_abstract: trim the name, append arxiv_id
+        # to the inverted index, dedupe.
+        n_benchmark_entries = 0
+        for exp in explore_reading.benchmarks:
+            key = (exp.benchmark or "").strip()
+            if not key:
+                continue
+            ids = state.counters.benchmark_counter.setdefault(key, [])
+            if action.arxiv_id not in ids:
+                ids.append(action.arxiv_id)
+            n_benchmark_entries += 1
+
         return ActionResult(
             success=True,
-            summary=f"[stub] read_paper: {action.arxiv_id} "
-            f"(read_papers_used now {state.budget.read_papers_used}) (M7)",
+            summary=(
+                f"read_paper: {action.arxiv_id} → "
+                f"{n_benchmark_entries} benchmark entries, "
+                f"budget {state.budget.read_papers_used}/{state.budget.read_paper_budget}"
+            ),
+            details={
+                "n_benchmark_entries": n_benchmark_entries,
+                "method_summary": explore_reading.proposed_method[:200],
+            },
         )
 
     async def _handle_coverage_audit(self, action: CoverageAuditAction, state):
