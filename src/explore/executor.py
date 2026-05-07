@@ -276,6 +276,81 @@ class ActionExecutor:
         )
 
     # —————————————————————————————————————————————————————
+    # Auto-skim helper (called from cluster_refresh)
+    # —————————————————————————————————————————————————————
+
+    async def _auto_skim_cluster_reps(
+        self, state: "ExplorationState", *, n_per_cluster: int = 3
+    ) -> int:
+        """Skim up to n_per_cluster representatives of each cluster that
+        haven't been skimmed yet. Returns the number of papers actually
+        skimmed.
+
+        No-op when:
+          - no llm wired (stub mode)
+          - no cluster_snapshot
+          - all reps already have skim
+        """
+        from src.explore.skim import skim_paper
+
+        if self.llm is None or state.cluster_snapshot is None:
+            return 0
+
+        targets: list = []
+        for cluster in state.cluster_snapshot.clusters:
+            taken = 0
+            for aid in cluster.representative_paper_ids:
+                if taken >= n_per_cluster:
+                    break
+                paper = state.paper_pool.get(aid)
+                if paper is None:
+                    continue
+                if paper.skim is not None:
+                    continue
+                if not paper.abstract:
+                    continue
+                targets.append(paper)
+                taken += 1
+
+        if not targets:
+            return 0
+
+        # Run skims with bounded concurrency. GeminiClient already has its
+        # own semaphore; this caps how many we wait on at once for failure
+        # isolation.
+        import asyncio
+
+        sem = asyncio.Semaphore(3)
+
+        async def _one(paper):
+            async with sem:
+                return paper, await skim_paper(paper, self.llm)
+
+        results = await asyncio.gather(
+            *(_one(p) for p in targets), return_exceptions=False
+        )
+
+        n_done = 0
+        for paper, skim in results:
+            if skim is None:
+                continue
+            paper.skim = skim
+            for bench in skim.benchmarks:
+                key = bench.strip()
+                if not key:
+                    continue
+                ids = state.counters.benchmark_counter.setdefault(key, [])
+                if paper.arxiv_id not in ids:
+                    ids.append(paper.arxiv_id)
+            n_done += 1
+
+        if n_done:
+            logger.info(
+                "[executor.auto_skim] skimmed %d/%d cluster reps", n_done, len(targets)
+            )
+        return n_done
+
+    # —————————————————————————————————————————————————————
     # Shared ingest path for citation/related results
     # —————————————————————————————————————————————————————
 
@@ -391,10 +466,22 @@ class ActionExecutor:
                 details={"status": "insufficient_papers", "reason": str(e)},
             )
 
+        # Auto-skim cluster representatives. The first onboard run produced a
+        # FieldMap with narrow benchmarks (Nav-AdaCoT-2.9M instead of HM3D /
+        # R2R / GOAT) because Planner only had budget to skim 2 of 134 papers
+        # — the abstracts that mentioned the classics never had their
+        # benchmark names extracted. Auto-skimming the cluster reps is
+        # essentially free: 2-5 unique reps per cluster × 2-5 clusters at
+        # ~$0.0002/skim ≈ $0.005 per refresh, and produces strong benchmark
+        # signal that both coverage_audit and the synthesizer rely on.
+        n_skimmed = await self._auto_skim_cluster_reps(state, n_per_cluster=3)
+
         summary_bits = [
             f"clusters={result.n_clusters}",
             f"noise={result.n_noise}",
         ]
+        if n_skimmed:
+            summary_bits.append(f"auto_skim={n_skimmed}")
         if result.new_slugs:
             summary_bits.append(f"new={','.join(result.new_slugs)}")
         if result.disappeared_slugs:
