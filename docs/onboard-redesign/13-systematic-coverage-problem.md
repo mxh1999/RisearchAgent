@@ -165,11 +165,22 @@
 
 倾向 C，留给 v0.3 实现时定。
 
-### 6.3 PDF heading 提取的可行性没验证
+### 6.3 PDF heading 提取的可行性 ✅ 已验证
 
-v0.1 假设我们能从 survey PDF 稳定抽 h1/h2。当前 `deep_reader.py` 用 PyMuPDF + LLM-based section parsing 整篇一起喂——**不是 heading-only 模式**。靠字号启发式 derive heading 在不同排版下未必稳。
+**spike 结果（2026-05-09，本地脚本 `tmp_spike/heading_spike.py`，已 gitignore）**：抓 2 篇排版完全不同的 embodied nav survey（`2407.07035` NeurIPS 风 / `2508.15354` ACM 期刊风），用 PyMuPDF `get_text("dict")` + 字号-粗体启发式 + shape filter，得到：
 
-**v0.1 实施前必须做的 5 分钟 spike**：抓 1-2 篇真 embodied nav survey PDF，看 PyMuPDF 输出能否可靠 derive h1/h2。如果不行，v0.1 退化到只抽 abstract（成本最低，但召回降一档）。
+| Paper | 总 lines | Heading 候选 | 真 heading | 噪声（作者块） | 实用率 |
+|---|---|---|---|---|---|
+| 2407.07035 | 1405 | 52 | ~43 | 9 author names | ~83% |
+| 2508.15354 | 1960 | 48 | ~41 | 7 author affiliations | ~85% |
+
+两篇都得到了完整的章节骨架（H1 / H2 / paragraph-leading bold 全混在一起，但**不需要分级**——v0.1 喂给 LLM 做一次清洗即可）。
+
+**结论**：
+- v0.1 不需要退化到只抽 abstract，**heading-only 模式可行**
+- 主要噪声是第 0 页的作者/affiliation 块——后处理时跳过 `page=0` 或加正则过滤即可
+- paragraph-leading bold（如 `Benchmarks.` `VLN Task Definition.`）混进 heading 列表是**好事**，它们正是 sub-area 候选词
+- v0.1 实现时直接复用 spike 脚本的启发式（字号-粗体 + shape filter），无需重写
 
 ### 6.4 没 survey 的领域怎么办
 
