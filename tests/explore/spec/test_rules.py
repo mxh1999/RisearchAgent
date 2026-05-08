@@ -34,6 +34,7 @@ from src.explore.spec.rules import (
     RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
     RULE_READ_PAPER_BUDGET,
     RULE_REQUIRE_COVERAGE_AUDIT_BEFORE_STOP,
+    RULE_TIME_BUDGET,
     Rule,
 )
 from src.explore.state import ActionRecord
@@ -221,6 +222,51 @@ def test_action_budget_applies_even_to_stop_proposal():
     )
     verdict = SpecEvaluator([RULE_ACTION_BUDGET]).evaluate(action, state)
     # rule applies_to=None so it still fires
+    assert verdict.kind == "force"
+
+
+# —————————————————————————————————————————————————————————————
+# RULE_TIME_BUDGET  (M2 step 1.5 — landed late after the 200-action run
+#                   showed action_budget alone overshoots wall-clock by ~30-50%)
+# —————————————————————————————————————————————————————————————
+
+
+def test_time_budget_inactive_below_limit():
+    state = make_state(elapsed_seconds=899.0, time_budget_seconds=900)
+    action = SearchAction(query="any", reasoning="test filler for time_budget")
+    verdict = SpecEvaluator([RULE_TIME_BUDGET]).evaluate(action, state)
+    assert verdict.kind == "allow"
+
+
+def test_time_budget_forces_stop_at_limit():
+    state = make_state(elapsed_seconds=900.0, time_budget_seconds=900)
+    action = SearchAction(query="any", reasoning="test filler for time_budget")
+    verdict = SpecEvaluator([RULE_TIME_BUDGET]).evaluate(action, state)
+    assert verdict.kind == "force"
+    assert verdict.rule_name == "time_budget"
+    assert verdict.forced_action is not None
+    assert verdict.forced_action.action_type == "stop"
+    assert verdict.forced_action.claimed_reason == "budget_exhausted"
+
+
+def test_time_budget_forces_stop_when_overshot():
+    """The bug we discovered: a 3600s budget overshot to 5605s should fire."""
+    state = make_state(elapsed_seconds=5605.0, time_budget_seconds=3600)
+    action = SearchAction(query="any", reasoning="test filler for time_budget overshoot")
+    verdict = SpecEvaluator([RULE_TIME_BUDGET]).evaluate(action, state)
+    assert verdict.kind == "force"
+    assert verdict.rule_name == "time_budget"
+    assert "5605s/3600s" in verdict.feedback
+
+
+def test_time_budget_applies_even_to_stop_proposal():
+    """If Planner proposes stop, time_budget still fires (both force stop anyway)."""
+    state = make_state(elapsed_seconds=901.0, time_budget_seconds=900)
+    action = StopAction(
+        claimed_reason="saturated",
+        reasoning="test: planner proposes stop when time budget also exhausted",
+    )
+    verdict = SpecEvaluator([RULE_TIME_BUDGET]).evaluate(action, state)
     assert verdict.kind == "force"
 
 
@@ -689,6 +735,7 @@ def test_all_rules_registry_contains_milestones():
         "deadlock_abort",
         # M2
         "action_budget",
+        "time_budget",
         "query_diversity",
         "query_must_be_specific_after_warmup",
         # M3

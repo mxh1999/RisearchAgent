@@ -1,12 +1,11 @@
 """Spec rule catalog.
 
 M1: read_paper_budget, no_repeated_exact_action, deadlock_abort.
-M2: action_budget, query_diversity, query_must_be_specific_after_warmup.
+M2: action_budget, time_budget, query_diversity,
+    query_must_be_specific_after_warmup.
 M3: force_cluster_refresh_on_pool_growth.
 M4: no_premature_stop_saturation, no_premature_stop_coverage,
     require_coverage_audit_before_stop, deadlock_escalate.
-
-Remaining (time_budget) arrives later as its state hook lands.
 """
 
 from __future__ import annotations
@@ -64,6 +63,13 @@ def _read_paper_budget_exceeded(state, action) -> bool:
 
 def _action_budget_exceeded(state, action) -> bool:
     return state.budget.actions_used >= state.budget.action_budget
+
+
+def _time_budget_exceeded(state, action) -> bool:
+    """Wall-clock budget hit. orchestrator updates elapsed_seconds at the top
+    of every loop iteration before planner.propose, so this predicate sees
+    fresh data."""
+    return state.budget.elapsed_seconds >= state.budget.time_budget_seconds
 
 
 def _action_equals_previous_executed(state, action) -> bool:
@@ -251,6 +257,35 @@ RULE_ACTION_BUDGET = Rule(
 )
 
 
+RULE_TIME_BUDGET = Rule(
+    name="time_budget",
+    description=(
+        "Wall-clock cap. Forces a stop when budget.elapsed_seconds >= "
+        "budget.time_budget_seconds. Without this, a 200-action run with "
+        "expensive Pro calls overshoots the wall-clock budget by ~30-50%; "
+        "action_budget alone is not sufficient."
+    ),
+    applies_to=None,
+    predicates=[_time_budget_exceeded],
+    verdict_fn=lambda state, action: Verdict(
+        kind="force",
+        rule_name="time_budget",
+        feedback=(
+            f"Time budget exhausted "
+            f"({state.budget.elapsed_seconds:.0f}s/"
+            f"{state.budget.time_budget_seconds}s). "
+            f"Forcing stop."
+        ),
+        forced_action=StopAction(
+            claimed_reason="budget_exhausted",
+            reasoning="forced by time_budget rule",
+        ),
+    ),
+    severity=20,
+    fail_policy="abort",
+)
+
+
 RULE_NO_PREMATURE_STOP_SATURATION = Rule(
     name="no_premature_stop_saturation",
     description=(
@@ -418,6 +453,7 @@ ALL_RULES: list[Rule] = [
     RULE_DEADLOCK_ABORT,
     # M2 additions
     RULE_ACTION_BUDGET,
+    RULE_TIME_BUDGET,
     RULE_QUERY_DIVERSITY,
     RULE_QUERY_MUST_BE_SPECIFIC_AFTER_WARMUP,
     # M3 additions
