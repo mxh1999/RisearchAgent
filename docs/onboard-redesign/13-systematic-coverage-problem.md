@@ -206,11 +206,9 @@
 
 在大改之前先收尾几个本周发现的小 bug：
 
-1. **`time_budget` 没 spec rule 强制**：`action_budget=200` 跑 5605s，超了 3600s 配额 2000s。靠 `action_budget` 救了场。需要加一条 `time_budget_exceeded` rule（force stop）。
-2. **`stop` 行为的 `claimed_reason` 校验**：planner 自己说 `budget_exhausted` 时如果 actions/time 都没满应该 force-allow 还是 block？目前是直接 force-allow。
-3. **skim 抽出 `benchmarks=0` 频繁**：abstract 没显式提 benchmark 名时整个 paper 的信号丢失。是否应该改 prompt 让 skim 也吐"潜在 benchmark"（即使没明说）？
-
-这些不影响本文设计但影响 v0.1 spike 的数据可信度。
+1. ✅ **`time_budget` 没 spec rule 强制**（已修，commit `4794e4f`）：`action_budget=200` 跑 5605s，超了 3600s 配额 2000s。靠 `action_budget` 救了场。`RULE_TIME_BUDGET` 已加入 spec catalog，4 条确定性测试通过。
+2. **`stop` 行为的 `claimed_reason` 校验**：planner 自己说 `budget_exhausted` 时如果 actions/time 都没满应该 force-allow 还是 block？目前是直接 force-allow。可以放到 v0.1 时再说，不阻塞。
+3. ✅ **skim 抽出 `benchmarks=0` 频繁**（已诊断 — 不是 bug）：跑过 skim 的论文 32/44 = 73% 返回空 benchmarks。逐案看 10 个 empty 的 abstract，**全部都是 abstract 真的没显式提 benchmark 名**（survey 论文太 high-level / 方法 paper 描述方法不描述 evaluation）。skim 保守抽取（abstract 必须显式提到才记录）是**正确的设计**——否则会把"用 HM3D 环境训练但没在 HM3D 上 evaluate"的方法误归为 HM3D benchmark，污染 `benchmark_counter`。这恰好印证了 §6.1 Moderator 的双层 term 提取设计：skim 高精低召为主，lexical scan 高召低精为辅。本问题由 v0.3 Moderator 解决，不动 skim。
 
 ## 8. 决策摘要
 
