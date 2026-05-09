@@ -191,16 +191,32 @@
 
 **承认这个事实**：survey-first 不是万能解。在小众领域，agent 的能力上限就是 LLM 的训练知识，和今天没差别。
 
-### 6.5 单 intent 验证不足
+### 6.5 多 intent 验证 ✅ systematic 100% 成立
 
-所有诊断数据来自 "embodied navigation" 一次跑。这个 intent **热门、广义、多 sub-area 并存**，可能让漂移问题特别明显。在 v0.1 spike 之前，建议跑 1-2 个其他 intent 验证 systematic 是否成立：
+**实验**（2026-05-09/10）：在已修 `time_budget` rule 之后，跑 2 个新 intent，`action_budget=100, time_budget=2400s, no seed papers, no enable-read`。
 
-候选：
-- `"implicit neural representations"`（中等广义）
-- `"test-time training"`（窄但活跃）
-- `"diffusion model alignment"`（窄）
+| Intent | 真命中 sub-area | 漂移到 | 漂移源 |
+|---|---|---|---|
+| embodied navigation（基线） | 1 / 5 | 3 SLAM/3D-recon clusters | 种子论文 bias |
+| implicit neural representations | 1 / 2 | **math representation theory** | **词义碰撞**（"representation" 同名） |
+| test-time training | 1 / 4 | **video diffusion / multi-view diffusion / video benchmarking** | **纯 cluster path dependence**（无 seed paper 也漂） |
 
-这次跑下来如果某些 intent 几乎没有漂移问题，那 v0.1 的优先级和 ROI 都要重估。
+3/3 intent 都漂移，但**触发源各不相同**——v0.1 设计需要分别考虑：
+
+1. **种子论文 bias**（embodied nav）：Stage 0 的 anchor 应**和 seed 论文配合而非被 seed 主导**
+2. **词义碰撞**（INR）：Stage 0 必须有 disambiguation prompt（"是 ML 里的 representation，不是数学里的"）。Survey-grounded 的 anchor 天然能 disambiguate（数学 representation theory 没有 ML 风格的 survey 在 cs.LG / cs.CV cat 下）
+3. **纯 path-dependent**（TTT）：**最难**——没 seed 也漂。唯一对策是 anchor coverage table 持续注入 planner（B 的核心）
+
+**两个意外发现**：
+
+1. **Synthesizer 已经能识别漂移**：两次跑的 FieldMap notes 都写了类似 "disjoint mathematical topic" / "likely due to semantic drift during the literature search"。LLM 看到了问题但没 mechanism 修——可以基于 notes 触发"是否重跑"作为 v0.1 的免费副作用。
+
+2. **Dominant benchmarks 稀薄是普遍现象**（不只 embodied nav）：
+   - INR: 3 benchmarks 全 N=1
+   - TTT: 4 benchmarks 全 N=1
+   再次印证 §6.1 Moderator 的 lexical 层是必需的——光靠 skim 永远不够。
+
+**结论**：v0.1 不是"也许有用的优化"，是**必需修复**。3/3 intent 验证成立。
 
 ## 7. 前置：先扫的基础 bug
 
