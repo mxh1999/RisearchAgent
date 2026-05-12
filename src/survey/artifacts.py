@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import yaml
 
@@ -26,6 +26,7 @@ class TopicArtifactManager:
         self.topics_root = topics_root
 
     def create_or_update_topic(self, profile: TopicProfile) -> TopicArtifactPaths:
+        self._validate_topic_id(profile.topic_id)
         topic_dir = self.topics_root / profile.topic_id
         state_dir = topic_dir / "state"
         papers_dir = topic_dir / "papers"
@@ -76,13 +77,20 @@ class TopicArtifactManager:
         text = path.read_text(encoding="utf-8") if path.exists() else ""
         replacement = f"{begin}\n{content.rstrip()}\n{end}"
 
-        if begin in text and end in text:
-            before = text.split(begin, 1)[0]
-            after = text.split(end, 1)[1]
+        begin_index = text.find(begin)
+        if begin_index >= 0:
+            end_index = text.find(end, begin_index + len(begin))
+        else:
+            end_index = -1
+
+        if begin_index >= 0 and end_index >= 0:
+            before = text[:begin_index]
+            after = text[end_index + len(end) :]
             updated = before + replacement + after
         else:
             updated = text.rstrip() + "\n\n" + replacement + "\n"
 
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(updated, encoding="utf-8")
 
     def append_event(self, topic_dir: Path, event: SurveyEvent) -> None:
@@ -96,3 +104,19 @@ class TopicArtifactManager:
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
+
+    @staticmethod
+    def _validate_topic_id(topic_id: str) -> None:
+        posix_path = PurePosixPath(topic_id)
+        windows_path = PureWindowsPath(topic_id)
+        invalid = (
+            not topic_id
+            or topic_id in {".", ".."}
+            or posix_path.is_absolute()
+            or windows_path.is_absolute()
+            or bool(windows_path.drive)
+            or len(posix_path.parts) != 1
+            or len(windows_path.parts) != 1
+        )
+        if invalid:
+            raise ValueError(f"Invalid topic_id: {topic_id!r}")
