@@ -7,7 +7,28 @@ import logging
 import sys
 
 from src.config import load_config
-from src.pipeline.orchestrator import PipelineOrchestrator
+
+
+class PaperReaderArgumentParser(argparse.ArgumentParser):
+    def parse_args(self, args=None, namespace=None):
+        parsed = super().parse_args(args, namespace)
+        if (
+            getattr(parsed, "command", None) == "survey"
+            and getattr(parsed, "survey_command", None) == "refine"
+        ):
+            has_topic_text = bool(getattr(parsed, "topic_text", None))
+            has_from_note = getattr(parsed, "from_note", None) is not None
+            if has_topic_text == has_from_note:
+                self.error(
+                    "survey refine requires exactly one of topic_text or --from-note"
+                )
+        return parsed
+
+
+def create_orchestrator(config):
+    from src.pipeline.orchestrator import PipelineOrchestrator
+
+    return PipelineOrchestrator(config)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -21,7 +42,7 @@ def setup_logging(verbose: bool = False) -> None:
 
 async def cmd_crawl(config):
     """Stage 1: Crawl ArXiv papers."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     await orch.db.initialize()
     count = await orch.stage_crawl()
     print(f"\nCrawled {count} papers.")
@@ -31,7 +52,7 @@ async def cmd_crawl(config):
 
 async def cmd_filter(config):
     """Stage 2: Filter papers by relevance."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     await orch.db.initialize()
     count = await orch.stage_filter()
     print(f"\nFiltered {count} papers.")
@@ -41,7 +62,7 @@ async def cmd_filter(config):
 
 async def cmd_read(config, arxiv_id: str):
     """Stage 3: Deep-read a specific paper."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     result = await orch.read_single_paper(arxiv_id)
 
     if not result:
@@ -98,7 +119,7 @@ async def cmd_read(config, arxiv_id: str):
 
 async def cmd_pipeline(config):
     """Run full 5-stage pipeline."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     stats = await orch.run_all()
     print(f"\nPipeline complete:")
     print(f"  Crawled:      {stats['crawled']}")
@@ -254,8 +275,8 @@ async def cmd_stats(config):
     print(f"  SOTA updates:     {stats['sota_updates']}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
+def build_parser() -> argparse.ArgumentParser:
+    parser = PaperReaderArgumentParser(
         description="RisearchAgent - ArXiv paper analysis pipeline"
     )
     parser.add_argument(
@@ -296,6 +317,37 @@ def main():
         help="Refine existing profile instead of starting fresh",
     )
 
+    survey_parser = subparsers.add_parser("survey", help="Survey topic workflows")
+    survey_subparsers = survey_parser.add_subparsers(
+        dest="survey_command",
+        help="Survey command to run",
+    )
+    survey_subparsers.required = True
+
+    refine_parser = survey_subparsers.add_parser(
+        "refine",
+        help="Refine a survey topic from text or a note",
+    )
+    refine_parser.add_argument(
+        "topic_text",
+        nargs="?",
+        help="Free-form topic text to refine",
+    )
+    refine_parser.add_argument(
+        "--from-note",
+        help="Path to a note file to refine",
+    )
+    refine_parser.add_argument(
+        "--topics-root",
+        default="data/topics",
+        help="Topic artifact root directory (default: data/topics)",
+    )
+
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     setup_logging(args.verbose)
 
@@ -305,6 +357,12 @@ def main():
 
     if args.command == "onboard":
         cmd_onboard(args)
+        return
+
+    if args.command == "survey":
+        from src.survey.cli import run_survey_command
+
+        run_survey_command(args)
         return
 
     config = load_config(args.config)
