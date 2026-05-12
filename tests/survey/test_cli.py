@@ -1,3 +1,8 @@
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import pytest
 
 from run import build_parser
@@ -32,3 +37,41 @@ def test_survey_refine_requires_input() -> None:
         build_parser().parse_args(["survey", "refine"])
 
     assert exc_info.value.code == 2
+
+
+def test_survey_refine_rejects_both_text_and_note() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        build_parser().parse_args(
+            ["survey", "refine", "topic", "--from-note", "note.md"]
+        )
+
+    assert exc_info.value.code == 2
+
+
+def test_survey_cli_import_does_not_require_google_genai() -> None:
+    repo_root = Path(__file__).parents[2]
+    code = textwrap.dedent(
+        """
+        import importlib.abc
+        import sys
+
+        class BlockGoogle(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "google" or fullname.startswith("google."):
+                    raise ModuleNotFoundError("blocked google-genai")
+                return None
+
+        sys.meta_path.insert(0, BlockGoogle())
+        import src.survey.cli
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr

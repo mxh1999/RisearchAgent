@@ -8,13 +8,22 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.config import LLMConfig, load_config
-from src.llm.gemini_client import GeminiClient
 from src.survey.artifacts import TopicArtifactManager
 from src.survey.models import SurveyEvent
 from src.survey.refiner import TopicRefiner
 
 
 async def cmd_survey_refine(args) -> None:
+    try:
+        from src.llm.gemini_client import GeminiClient
+    except ModuleNotFoundError as exc:
+        if exc.name and (exc.name == "google" or exc.name.startswith("google.")):
+            raise SystemExit(
+                "Error: google-genai is required for survey refine. "
+                "Run pip install -r requirements.txt."
+            ) from exc
+        raise
+
     load_dotenv()
     app_config = load_config(args.config)
     api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
