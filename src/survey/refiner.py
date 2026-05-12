@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 from src.survey.models import (
     ConceptAxis,
@@ -80,36 +81,108 @@ class TopicRefiner:
         )
         return self._profile_from_llm(raw)
 
-    def _profile_from_llm(self, raw: dict[str, Any]) -> TopicProfile:
-        name = str(raw["name"])
-        scope_raw = raw.get("scope", {})
+    def _profile_from_llm(self, raw: Any) -> TopicProfile:
+        if not isinstance(raw, Mapping):
+            self._schema_error("root must be a mapping")
+
+        name = self._string_field(raw, "name")
+        description = self._string_field(raw, "description")
+        intent = self._string_field(raw, "intent")
+        concept_axes = self._mapping_list_field(raw, "concept_axes")
+        scope_raw = self._mapping_field(raw, "scope")
+        search_queries = self._mapping_list_field(raw, "search_queries")
         return TopicProfile(
             topic_id=make_topic_id(name),
             name=name,
-            description=str(raw["description"]),
-            intent=str(raw["intent"]),
+            description=description,
+            intent=intent,
             concept_axes=[
                 ConceptAxis(
-                    name=str(item["name"]),
-                    description=str(item["description"]),
+                    name=self._string_field(item, "name", "concept_axes[]"),
+                    description=self._string_field(
+                        item,
+                        "description",
+                        "concept_axes[]",
+                    ),
                 )
-                for item in raw.get("concept_axes", [])
+                for item in concept_axes
             ],
             scope=TopicScope(
-                positive=list(scope_raw.get("positive", [])),
-                negative=list(scope_raw.get("negative", [])),
-                adjacent=list(scope_raw.get("adjacent", [])),
-                collision=list(scope_raw.get("collision", [])),
+                positive=self._string_list_field(scope_raw, "positive", "scope"),
+                negative=self._string_list_field(scope_raw, "negative", "scope"),
+                adjacent=self._string_list_field(scope_raw, "adjacent", "scope"),
+                collision=self._string_list_field(scope_raw, "collision", "scope"),
             ),
-            anchor_papers=list(raw.get("anchor_papers", [])),
-            benchmark_hints=list(raw.get("benchmark_hints", [])),
+            anchor_papers=self._string_list_field(raw, "anchor_papers"),
+            benchmark_hints=self._string_list_field(raw, "benchmark_hints"),
             search_queries=[
                 TopicQuery(
-                    name=str(item["name"]),
-                    query=str(item["query"]),
-                    purpose=str(item["purpose"]),
+                    name=self._string_field(item, "name", "search_queries[]"),
+                    query=self._string_field(item, "query", "search_queries[]"),
+                    purpose=self._string_field(item, "purpose", "search_queries[]"),
                 )
-                for item in raw.get("search_queries", [])
+                for item in search_queries
             ],
-            open_questions=list(raw.get("open_questions", [])),
+            open_questions=self._string_list_field(raw, "open_questions"),
         )
+
+    @staticmethod
+    def _schema_error(message: str) -> NoReturn:
+        raise ValueError(f"Invalid topic profile schema: {message}")
+
+    def _field_path(self, field: str, parent: str | None = None) -> str:
+        if parent is None:
+            return field
+        return f"{parent}.{field}"
+
+    def _string_field(
+        self,
+        raw: Mapping[str, Any],
+        field: str,
+        parent: str | None = None,
+    ) -> str:
+        value = raw.get(field)
+        if not isinstance(value, str):
+            self._schema_error(f"{self._field_path(field, parent)} must be a string")
+        return value
+
+    def _mapping_field(
+        self,
+        raw: Mapping[str, Any],
+        field: str,
+        parent: str | None = None,
+    ) -> Mapping[str, Any]:
+        value = raw.get(field)
+        if not isinstance(value, Mapping):
+            self._schema_error(f"{self._field_path(field, parent)} must be a mapping")
+        return value
+
+    def _string_list_field(
+        self,
+        raw: Mapping[str, Any],
+        field: str,
+        parent: str | None = None,
+    ) -> list[str]:
+        value = raw.get(field)
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) for item in value
+        ):
+            self._schema_error(
+                f"{self._field_path(field, parent)} must be a list of strings"
+            )
+        return value
+
+    def _mapping_list_field(
+        self,
+        raw: Mapping[str, Any],
+        field: str,
+        parent: str | None = None,
+    ) -> list[Mapping[str, Any]]:
+        value = raw.get(field)
+        if not isinstance(value, list) or not all(
+            isinstance(item, Mapping) for item in value
+        ):
+            self._schema_error(
+                f"{self._field_path(field, parent)} must be a list of mappings"
+            )
+        return value
