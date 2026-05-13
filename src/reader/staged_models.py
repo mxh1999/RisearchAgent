@@ -4,6 +4,18 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 
+def _parse_bool(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    raise ValueError(f"Expected bool or 'true'/'false' string, got {raw!r}")
+
+
 @dataclass(frozen=True)
 class PageText:
     page: int
@@ -97,9 +109,7 @@ class ExperimentRecord:
     source: Evidence
 
     def to_dict(self) -> dict[str, Any]:
-        raw = asdict(self)
-        raw["source"] = self.source.to_dict()
-        return raw
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ExperimentRecord":
@@ -109,7 +119,7 @@ class ExperimentRecord:
             metric=str(raw["metric"]),
             method=str(raw["method"]),
             value=float(raw["value"]),
-            higher_is_better=bool(raw["higher_is_better"]),
+            higher_is_better=_parse_bool(raw["higher_is_better"]),
             source=Evidence.from_dict(raw["source"]),
         )
 

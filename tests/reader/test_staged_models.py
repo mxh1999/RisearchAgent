@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.reader.staged_models import (
     Evidence,
     ExperimentRecord,
@@ -79,3 +81,68 @@ def test_reading_package_round_trip() -> None:
 
     assert restored == package
     assert restored.experiments[0].source.page == 8
+
+
+def test_experiment_record_from_dict_preserves_false_metric_direction() -> None:
+    raw = {
+        "benchmark": "GOAT-Bench",
+        "setting": "val unseen",
+        "metric": "Error",
+        "method": "SampleNav",
+        "value": 12.3,
+        "higher_is_better": False,
+        "source": {
+            "text": "Error result",
+            "page": 8,
+            "section": "Experiments",
+            "quote": "SampleNav obtains 12.3 error.",
+            "confidence": "high",
+        },
+    }
+
+    restored = ExperimentRecord.from_dict(raw)
+
+    assert restored.higher_is_better is False
+
+
+def test_experiment_record_from_dict_parses_false_string_metric_direction() -> None:
+    raw = {
+        "benchmark": "GOAT-Bench",
+        "setting": "val unseen",
+        "metric": "Error",
+        "method": "SampleNav",
+        "value": 12.3,
+        "higher_is_better": "false",
+        "source": {
+            "text": "Error result",
+            "page": 8,
+            "section": "Experiments",
+            "quote": "SampleNav obtains 12.3 error.",
+            "confidence": "high",
+        },
+    }
+
+    restored = ExperimentRecord.from_dict(raw)
+
+    assert restored.higher_is_better is False
+
+
+def test_experiment_record_from_dict_rejects_invalid_metric_direction() -> None:
+    raw = {
+        "benchmark": "GOAT-Bench",
+        "setting": "val unseen",
+        "metric": "SPL",
+        "method": "SampleNav",
+        "value": 35.1,
+        "higher_is_better": "sometimes",
+        "source": {
+            "text": "SPL result",
+            "page": 8,
+            "section": "Experiments",
+            "quote": "SampleNav obtains 35.1 SPL.",
+            "confidence": "high",
+        },
+    }
+
+    with pytest.raises(ValueError):
+        ExperimentRecord.from_dict(raw)
