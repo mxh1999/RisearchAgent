@@ -122,7 +122,22 @@ def test_render_reading_markdown_escapes_table_pipes_and_newlines() -> None:
     assert "\r" not in claim_rows[0]
 
 
-@pytest.mark.parametrize("paper_id", ["../escape", "..\\escape", "C:escape", ""])
+@pytest.mark.parametrize(
+    "paper_id",
+    [
+        "../escape",
+        "..\\escape",
+        "C:escape",
+        "",
+        "foo:bar",
+        "name?x",
+        "name\nx",
+        "name.",
+        "name ",
+        "CON",
+        "com1",
+    ],
+)
 def test_write_reading_package_rejects_unsafe_paper_id(tmp_path, paper_id: str) -> None:
     package = _reading_package()
     package = PaperReadingPackage(
@@ -148,7 +163,22 @@ def test_validate_safe_paper_id_accepts_safe_ids(paper_id: str) -> None:
     validate_safe_paper_id(paper_id)
 
 
-@pytest.mark.parametrize("paper_id", ["../escape", "..\\escape", "C:escape", ""])
+@pytest.mark.parametrize(
+    "paper_id",
+    [
+        "../escape",
+        "..\\escape",
+        "C:escape",
+        "",
+        "foo:bar",
+        "name?x",
+        "name\nx",
+        "name.",
+        "name ",
+        "CON",
+        "com1",
+    ],
+)
 def test_validate_safe_paper_id_rejects_unsafe_ids(paper_id: str) -> None:
     with pytest.raises(ValueError):
         validate_safe_paper_id(paper_id)

@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 
 from src.reader.staged_models import PaperReadingPackage
 
-_WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
+_SAFE_PAPER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
 
 
 def render_reading_markdown(package: PaperReadingPackage) -> str:
@@ -128,15 +136,10 @@ def write_reading_package(
 
 
 def validate_safe_paper_id(paper_id: str) -> None:
-    if (
-        not paper_id
-        or paper_id in {".", ".."}
-        or "/" in paper_id
-        or "\\" in paper_id
-        or _WINDOWS_DRIVE_PATTERN.match(paper_id)
-        or PurePosixPath(paper_id).is_absolute()
-        or PureWindowsPath(paper_id).is_absolute()
-    ):
+    base_name = paper_id.split(".", 1)[0].upper()
+    if not _SAFE_PAPER_ID_PATTERN.fullmatch(paper_id):
+        raise ValueError(f"Unsafe paper_id: {paper_id!r}")
+    if paper_id[-1] in {".", " "} or base_name in _WINDOWS_RESERVED_NAMES:
         raise ValueError(f"Unsafe paper_id: {paper_id!r}")
 
 
