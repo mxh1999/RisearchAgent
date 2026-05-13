@@ -170,11 +170,15 @@ def _schema_instructions(stage: str) -> str:
         ),
         "experiments": (
             "Return JSON with key experiments: list of objects with benchmark, "
-            "setting, metric, method, value, higher_is_better, source evidence."
+            "setting, metric, method, value, higher_is_better, source. Use \"N/A\" "
+            "for unknown string fields; do not use null. source must be an object "
+            "with text, page, section, quote, confidence. Do not use source_evidence."
         ),
         "topic_relation": (
             "Return JSON with key topic_relation containing relevance, concept_axes, "
-            "collision_risk, differentiation."
+            "collision_risk, differentiation. If no topic profile is provided, "
+            "return relevance \"unknown\", concept_axes [], collision_risk "
+            "\"unknown\", differentiation \"\"."
         ),
     }
     return schemas[stage]
@@ -197,13 +201,15 @@ def _pages_to_prompt_text(
 
 def _parse_summary(raw: Any) -> PaperSummary:
     root = _require_mapping(raw, "summary_response")
-    summary = _require_mapping(_required(root, "summary", "summary"), "summary")
+    summary = dict(_require_mapping(_required(root, "summary", "summary"), "summary"))
     _require_string(_required(summary, "problem", "summary.problem"), "summary.problem")
     _require_string(_required(summary, "method", "summary.method"), "summary.method")
     _require_string(
         _required(summary, "takeaway", "summary.takeaway"), "summary.takeaway"
     )
-    _require_string_list(summary.get("contributions", []), "summary.contributions")
+    summary["contributions"] = _require_string_list(
+        summary.get("contributions", []), "summary.contributions"
+    )
     return PaperSummary.from_dict(summary)
 
 
@@ -229,11 +235,13 @@ def _parse_method(raw: Any) -> list[MethodModule]:
     modules = []
     for index, module_raw in enumerate(modules_raw):
         path = f"method_modules[{index}]"
-        module = _require_mapping(module_raw, path)
+        module = dict(_require_mapping(module_raw, path))
         _require_string(_required(module, "name", f"{path}.name"), f"{path}.name")
         _require_string(_required(module, "role", f"{path}.role"), f"{path}.role")
-        _require_string_list(module.get("inputs", []), f"{path}.inputs")
-        _require_string_list(module.get("outputs", []), f"{path}.outputs")
+        module["inputs"] = _require_string_list(module.get("inputs", []), f"{path}.inputs")
+        module["outputs"] = _require_string_list(
+            module.get("outputs", []), f"{path}.outputs"
+        )
         modules.append(MethodModule.from_dict(module))
     return modules
 
@@ -244,7 +252,9 @@ def _parse_experiments(raw: Any) -> list[ExperimentRecord]:
     records = []
     for index, record_raw in enumerate(records_raw):
         path = f"experiments[{index}]"
-        record = _require_mapping(record_raw, path)
+        record = dict(_require_mapping(record_raw, path))
+        if record.get("setting") is None:
+            record["setting"] = "N/A"
         for key in ("benchmark", "setting", "metric", "method"):
             _require_string(_required(record, key, f"{path}.{key}"), f"{path}.{key}")
         _require_number(_required(record, "value", f"{path}.value"), f"{path}.value")
@@ -260,14 +270,23 @@ def _parse_experiments(raw: Any) -> list[ExperimentRecord]:
 
 def _parse_topic_relation(raw: Any) -> TopicRelation:
     root = _require_mapping(raw, "topic_relation_response")
-    relation = _require_mapping(
-        _required(root, "topic_relation", "topic_relation"), "topic_relation"
+    relation = dict(
+        _require_mapping(
+            _required(root, "topic_relation", "topic_relation"),
+            "topic_relation",
+        )
     )
+    if relation.get("relevance") is None:
+        relation["relevance"] = "unknown"
+    if relation.get("collision_risk") is None:
+        relation["collision_risk"] = "unknown"
+    if relation.get("differentiation") is None:
+        relation["differentiation"] = ""
     _require_string(
         _required(relation, "relevance", "topic_relation.relevance"),
         "topic_relation.relevance",
     )
-    _require_string_list(
+    relation["concept_axes"] = _require_string_list(
         relation.get("concept_axes", []), "topic_relation.concept_axes"
     )
     if "collision_risk" in relation:
@@ -286,7 +305,7 @@ def _validate_evidence(raw: Mapping[str, Any], path: str) -> None:
     _require_int(_required(raw, "page", f"{path}.page"), f"{path}.page")
     _require_string(_required(raw, "section", f"{path}.section"), f"{path}.section")
     _require_string(_required(raw, "quote", f"{path}.quote"), f"{path}.quote")
-    _require_string(
+    _require_scalar_string(
         _required(raw, "confidence", f"{path}.confidence"), f"{path}.confidence"
     )
 
@@ -315,7 +334,17 @@ def _require_string(raw: Any, path: str) -> str:
     return raw
 
 
+def _require_scalar_string(raw: Any, path: str) -> Any:
+    if raw is None or isinstance(raw, (list, Mapping)):
+        raise ValueError(f"{path} must be a string-like scalar")
+    return raw
+
+
 def _require_string_list(raw: Any, path: str) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
     items = _require_list(raw, path)
     for index, item in enumerate(items):
         _require_string(item, f"{path}[{index}]")
@@ -323,9 +352,18 @@ def _require_string_list(raw: Any, path: str) -> list[str]:
 
 
 def _require_int(raw: Any, path: str) -> int:
-    if isinstance(raw, bool) or not isinstance(raw, int):
+    if isinstance(raw, bool):
         raise ValueError(f"{path} must be an integer")
-    return raw
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        try:
+            int(raw)
+        except ValueError:
+            pass
+        else:
+            return int(raw)
+    raise ValueError(f"{path} must be an integer")
 
 
 def _require_number(raw: Any, path: str) -> float:
