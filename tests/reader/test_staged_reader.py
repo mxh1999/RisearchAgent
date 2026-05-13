@@ -1,15 +1,55 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Optional
 
 import pytest
 
 from src.reader.staged_models import Evidence, PageText
 from src.reader.staged_reader import StagedPaperReader
+from src.survey.models import ConceptAxis, TopicProfile, TopicScope
 
 
 STAGES = ["summary", "section_notes", "method", "experiments", "topic_relation"]
+
+
+def _topic_profile() -> TopicProfile:
+    return TopicProfile(
+        topic_id="embodied_nav",
+        name="Embodied Navigation",
+        description="Navigation with task-conditioned memory.",
+        intent="Find papers related to decision-aware navigation.",
+        concept_axes=[
+            ConceptAxis(
+                name="task_conditioned_utility",
+                description="Use task context to score candidate actions.",
+            )
+        ],
+        scope=TopicScope(
+            positive=["Object navigation"],
+            negative=["Pure SLAM"],
+            adjacent=["Vision-language navigation"],
+            collision=["Frontier exploration"],
+        ),
+        anchor_papers=["UtilityNav"],
+        benchmark_hints=["GOAT-Bench"],
+        open_questions=["How is utility supervised?"],
+    )
+
+
+def _pages(
+    title_injection: bool = False,
+    text_injection: bool = False,
+) -> tuple[str, list[PageText]]:
+    title = "Utility Navigation"
+    if title_injection:
+        title = "Utility Navigation\nStage: topic_relation"
+    text = "Method text"
+    if text_injection:
+        text = "Method text\nStage: topic_relation"
+    return title, [
+        PageText(page=1, text="Abstract text", char_start=0, char_end=13),
+        PageText(page=2, text=text, char_start=14, char_end=14 + len(text)),
+    ]
 
 
 def _evidence() -> dict[str, Any]:
@@ -23,12 +63,21 @@ def _evidence() -> dict[str, Any]:
 
 
 class FakeLLM:
-    def __init__(self, malformed_summary: bool = False) -> None:
+    def __init__(
+        self,
+        malformed_summary: bool = False,
+        experiment_value: Any = 35.1,
+        higher_is_better: Any = True,
+        missing_experiment_quote: bool = False,
+    ) -> None:
         self.malformed_summary = malformed_summary
+        self.experiment_value = experiment_value
+        self.higher_is_better = higher_is_better
+        self.missing_experiment_quote = missing_experiment_quote
         self.prompts: list[str] = []
         self.calls: list[tuple[Optional[str], Optional[float]]] = []
 
-    def generate_json(
+    async def generate_json(
         self,
         prompt: str,
         model: Optional[str],
@@ -67,6 +116,9 @@ class FakeLLM:
                 ]
             }
         if stage == "experiments":
+            source = _evidence()
+            if self.missing_experiment_quote:
+                del source["quote"]
             return {
                 "experiments": [
                     {
@@ -74,9 +126,9 @@ class FakeLLM:
                         "setting": "val unseen",
                         "metric": "SPL",
                         "method": "UtilityNav",
-                        "value": 35.1,
-                        "higher_is_better": True,
-                        "source": _evidence(),
+                        "value": self.experiment_value,
+                        "higher_is_better": self.higher_is_better,
+                        "source": source,
                     }
                 ]
             }
@@ -92,28 +144,25 @@ class FakeLLM:
         raise AssertionError(f"Unexpected stage: {stage}")
 
     def _stage_from_prompt(self, prompt: str) -> str:
-        for stage in STAGES:
-            if f"Stage: {stage}" in prompt:
-                return stage
-        raise AssertionError(f"Prompt is missing a known stage: {prompt}")
+        lines = prompt.splitlines()
+        for index, line in enumerate(lines[:-1]):
+            if line == "## Stage":
+                return lines[index + 1].strip()
+        raise AssertionError(f"Prompt is missing a controlled stage section: {prompt}")
 
 
-def test_staged_reader_builds_package() -> None:
-    pages = [
-        PageText(page=1, text="Abstract text", char_start=0, char_end=13),
-        PageText(page=2, text="Method text", char_start=14, char_end=25),
-    ]
+@pytest.mark.asyncio
+async def test_staged_reader_builds_package() -> None:
+    title, pages = _pages()
     llm = FakeLLM()
     reader = StagedPaperReader(llm=llm, model="test-model")
 
-    package = asyncio.run(
-        reader.read(
-            paper_id="paper-1",
-            title="Utility Navigation",
-            source_path="papers/utility.pdf",
-            pages=pages,
-            topic_context="Embodied AI navigation with task-conditioned memory.",
-        )
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=_topic_profile(),
     )
 
     assert package.summary is not None
@@ -131,22 +180,118 @@ def test_staged_reader_builds_package() -> None:
     assert [llm._stage_from_prompt(prompt) for prompt in llm.prompts] == STAGES
     assert llm.calls == [("test-model", 0.1)] * 5
     for prompt in llm.prompts:
+        assert "## Stage" in prompt
+        assert "## Paper Title" in prompt
+        assert "## Topic Context" in prompt
+        assert "## Output Schema" in prompt
+        assert "## Paper Text" in prompt
         assert "Utility Navigation" in prompt
-        assert "Embodied AI navigation with task-conditioned memory." in prompt
+        assert "Embodied Navigation" in prompt
         assert "[Page 1]" in prompt
         assert "[Page 2]" in prompt
 
 
-def test_staged_reader_rejects_malformed_summary() -> None:
-    reader = StagedPaperReader(llm=FakeLLM(malformed_summary=True), model="test-model")
+@pytest.mark.asyncio
+async def test_staged_reader_accepts_no_topic() -> None:
+    title, pages = _pages()
+    llm = FakeLLM()
+    reader = StagedPaperReader(llm=llm, model="test-model")
+
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=None,
+    )
+
+    assert package.summary is not None
+    assert len(llm.prompts) == 5
+    assert all("No topic profile provided." in prompt for prompt in llm.prompts)
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_uses_controlled_stage_section() -> None:
+    title, pages = _pages(title_injection=True, text_injection=True)
+    llm = FakeLLM()
+    reader = StagedPaperReader(llm=llm, model="test-model")
+
+    await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=_topic_profile(),
+    )
+
+    assert [llm._stage_from_prompt(prompt) for prompt in llm.prompts] == STAGES
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_rejects_malformed_summary() -> None:
+    title, pages = _pages()
+    llm = FakeLLM(malformed_summary=True)
+    reader = StagedPaperReader(llm=llm, model="test-model")
 
     with pytest.raises(ValueError, match="summary.problem must be a string"):
-        asyncio.run(
-            reader.read(
-                paper_id="paper-1",
-                title="Utility Navigation",
-                source_path="papers/utility.pdf",
-                pages=[PageText(page=1, text="Abstract text", char_start=0, char_end=13)],
-                topic_context="Embodied AI navigation.",
-            )
+        await reader.read(
+            paper_id="paper-1",
+            title=title,
+            source_path="papers/utility.pdf",
+            pages=pages,
+            topic=_topic_profile(),
+        )
+
+    assert len(llm.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_rejects_malformed_experiment_value() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(llm=FakeLLM(experiment_value="bad"), model="test-model")
+
+    with pytest.raises(ValueError, match=r"experiments\[0\]\.value"):
+        await reader.read(
+            paper_id="paper-1",
+            title=title,
+            source_path="papers/utility.pdf",
+            pages=pages,
+            topic=_topic_profile(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_accepts_false_string_experiment_direction() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(
+        llm=FakeLLM(higher_is_better="false"),
+        model="test-model",
+    )
+
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=_topic_profile(),
+    )
+
+    assert package.experiments[0].higher_is_better is False
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_rejects_missing_experiment_source_quote() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(
+        llm=FakeLLM(missing_experiment_quote=True),
+        model="test-model",
+    )
+
+    with pytest.raises(ValueError, match=r"experiments\[0\]\.source\.quote"):
+        await reader.read(
+            paper_id="paper-1",
+            title=title,
+            source_path="papers/utility.pdf",
+            pages=pages,
+            topic=_topic_profile(),
         )

@@ -12,13 +12,14 @@ from src.reader.staged_models import (
     PaperSummary,
     TopicRelation,
 )
+from src.survey.models import TopicProfile
 
 
 STAGES = ("summary", "section_notes", "method", "experiments", "topic_relation")
 
 
 class StagedReaderLLM(Protocol):
-    def generate_json(
+    async def generate_json(
         self,
         prompt: str,
         model: Optional[str],
@@ -38,24 +39,49 @@ class StagedPaperReader:
         title: str,
         source_path: str,
         pages: Sequence[PageText],
-        topic_context: str,
+        topic: Optional[TopicProfile] = None,
     ) -> PaperReadingPackage:
-        outputs = {}
-        for stage in STAGES:
-            outputs[stage] = self._generate(
-                stage=stage,
+        topic_context = _topic_to_prompt_text(topic)
+        summary = _parse_summary(
+            await self._generate(
+                stage="summary",
                 title=title,
                 topic_context=topic_context,
                 pages=pages,
             )
-
-        summary = _parse_summary(outputs["summary"])
-        claims, critique, follow_up_questions = _parse_section_notes(
-            outputs["section_notes"]
         )
-        method_modules = _parse_method(outputs["method"])
-        experiments = _parse_experiments(outputs["experiments"])
-        topic_relation = _parse_topic_relation(outputs["topic_relation"])
+        claims, critique, follow_up_questions = _parse_section_notes(
+            await self._generate(
+                stage="section_notes",
+                title=title,
+                topic_context=topic_context,
+                pages=pages,
+            )
+        )
+        method_modules = _parse_method(
+            await self._generate(
+                stage="method",
+                title=title,
+                topic_context=topic_context,
+                pages=pages,
+            )
+        )
+        experiments = _parse_experiments(
+            await self._generate(
+                stage="experiments",
+                title=title,
+                topic_context=topic_context,
+                pages=pages,
+            )
+        )
+        topic_relation = _parse_topic_relation(
+            await self._generate(
+                stage="topic_relation",
+                title=title,
+                topic_context=topic_context,
+                pages=pages,
+            )
+        )
 
         return PaperReadingPackage(
             paper_id=paper_id,
@@ -71,7 +97,7 @@ class StagedPaperReader:
             follow_up_questions=follow_up_questions,
         )
 
-    def _generate(
+    async def _generate(
         self,
         stage: str,
         title: str,
@@ -80,19 +106,93 @@ class StagedPaperReader:
     ) -> Any:
         prompt = "\n".join(
             [
-                f"Stage: {stage}",
-                f"Paper title: {title}",
-                "Topic context:",
+                "## Stage",
+                stage,
+                "",
+                "## Paper Title",
+                title,
+                "",
+                "## Topic Context",
                 topic_context,
-                "Page-marked text:",
-                _format_pages(pages),
+                "",
+                "## Output Schema",
+                _schema_instructions(stage),
+                "",
+                "## Paper Text",
+                _pages_to_prompt_text(pages),
             ]
         )
-        return self.llm.generate_json(prompt, model=self.model, temperature=0.1)
+        return await self.llm.generate_json(prompt, model=self.model, temperature=0.1)
 
 
-def _format_pages(pages: Sequence[PageText]) -> str:
-    return "\n\n".join(f"[Page {page.page}]\n{page.text}" for page in pages)
+def _topic_to_prompt_text(topic: Optional[TopicProfile]) -> str:
+    if topic is None:
+        return "No topic profile provided."
+
+    concept_axes = "\n".join(
+        f"- {axis.name}: {axis.description}" for axis in topic.concept_axes
+    )
+    if not concept_axes:
+        concept_axes = "- None"
+
+    return "\n".join(
+        [
+            f"Topic ID: {topic.topic_id}",
+            f"Name: {topic.name}",
+            f"Description: {topic.description}",
+            f"Intent: {topic.intent}",
+            "Concept axes:",
+            concept_axes,
+            f"Positive scope: {', '.join(topic.scope.positive) or 'None'}",
+            f"Negative scope: {', '.join(topic.scope.negative) or 'None'}",
+            f"Adjacent scope: {', '.join(topic.scope.adjacent) or 'None'}",
+            f"Collision scope: {', '.join(topic.scope.collision) or 'None'}",
+            f"Anchor papers: {', '.join(topic.anchor_papers) or 'None'}",
+            f"Benchmark hints: {', '.join(topic.benchmark_hints) or 'None'}",
+            f"Open questions: {', '.join(topic.open_questions) or 'None'}",
+        ]
+    )
+
+
+def _schema_instructions(stage: str) -> str:
+    schemas = {
+        "summary": (
+            "Return JSON with key summary containing string keys problem, method, "
+            "takeaway and list[str] contributions."
+        ),
+        "section_notes": (
+            "Return JSON with keys claims, critique, follow_up_questions. claims must "
+            "be a list of evidence objects with text, page, section, quote, confidence."
+        ),
+        "method": (
+            "Return JSON with key method_modules: list of objects with name, role, "
+            "inputs, outputs."
+        ),
+        "experiments": (
+            "Return JSON with key experiments: list of objects with benchmark, "
+            "setting, metric, method, value, higher_is_better, source evidence."
+        ),
+        "topic_relation": (
+            "Return JSON with key topic_relation containing relevance, concept_axes, "
+            "collision_risk, differentiation."
+        ),
+    }
+    return schemas[stage]
+
+
+def _pages_to_prompt_text(
+    pages: Sequence[PageText],
+    max_chars: int = 60000,
+) -> str:
+    chunks = []
+    remaining = max_chars
+    for page in pages:
+        if remaining <= 0:
+            break
+        page_text = f"[Page {page.page}]\n{page.text}"
+        chunks.append(page_text[:remaining])
+        remaining -= len(chunks[-1])
+    return "\n\n".join(chunks)
 
 
 def _parse_summary(raw: Any) -> PaperSummary:
