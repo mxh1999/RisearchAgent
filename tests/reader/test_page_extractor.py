@@ -1,10 +1,45 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.reader.page_extractor import extract_pages_from_pdf, extract_pages_from_text_file
+
+
+class FakePage:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.get_text_calls = 0
+
+    def get_text(self) -> str:
+        self.get_text_calls += 1
+        return self.text
+
+
+class FakeDoc:
+    def __init__(self, texts: list[str]) -> None:
+        self.closed = False
+        self.iterations = 0
+        self.pages = [FakePage(text) for text in texts]
+
+    def __iter__(self):
+        self.iterations += 1
+        return iter(self.pages)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def install_fake_fitz(monkeypatch, fake_doc: FakeDoc) -> None:
+    def fake_open(path: Path) -> FakeDoc:
+        return fake_doc
+
+    fake_fitz = SimpleNamespace(open=fake_open)
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
 
 
 def test_extract_pages_from_text_file(tmp_path: Path) -> None:
@@ -21,34 +56,18 @@ def test_extract_pages_from_text_file(tmp_path: Path) -> None:
     assert "Second line" in pages[0].text
 
 
-def test_extract_pages_from_pdf_uses_lazy_fitz(
-    monkeypatch, tmp_path: Path
-) -> None:
-    class FakePage:
-        def __init__(self, text: str) -> None:
-            self.text = text
+def test_import_page_extractor_does_not_require_fitz(monkeypatch) -> None:
+    monkeypatch.delitem(sys.modules, "src.reader.page_extractor", raising=False)
+    monkeypatch.setitem(sys.modules, "fitz", None)
 
-        def get_text(self) -> str:
-            return self.text
+    module = importlib.import_module("src.reader.page_extractor")
 
-    class FakeDoc:
-        def __init__(self) -> None:
-            self.closed = False
-            self.pages = [FakePage("First page"), FakePage("Second page")]
+    assert hasattr(module, "extract_pages_from_pdf")
 
-        def __iter__(self):
-            return iter(self.pages)
 
-        def close(self) -> None:
-            self.closed = True
-
-    fake_doc = FakeDoc()
-
-    def fake_open(path: Path) -> FakeDoc:
-        return fake_doc
-
-    fake_fitz = SimpleNamespace(open=fake_open)
-    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+def test_extract_pages_from_pdf_uses_lazy_fitz(monkeypatch, tmp_path: Path) -> None:
+    fake_doc = FakeDoc(["First page", "Second page"])
+    install_fake_fitz(monkeypatch, fake_doc)
     pdf_path = tmp_path / "paper.pdf"
 
     pages = extract_pages_from_pdf(pdf_path, max_pages=5)
@@ -57,4 +76,46 @@ def test_extract_pages_from_pdf_uses_lazy_fitz(
     assert pages[0].text == "First page"
     assert pages[0].char_end == len("First page")
     assert pages[1].char_start == len("First page\n")
+    assert fake_doc.closed is True
+
+
+@pytest.mark.parametrize("max_pages", [None, 3])
+def test_extract_pages_from_pdf_reads_all_pages_when_unlimited(
+    monkeypatch, tmp_path: Path, max_pages
+) -> None:
+    fake_doc = FakeDoc(["First page", "Second page", "Third page"])
+    install_fake_fitz(monkeypatch, fake_doc)
+
+    pages = extract_pages_from_pdf(tmp_path / "paper.pdf", max_pages=max_pages)
+
+    assert [page.text for page in pages] == ["First page", "Second page", "Third page"]
+    assert [page.get_text_calls for page in fake_doc.pages] == [1, 1, 1]
+    assert fake_doc.closed is True
+
+
+def test_extract_pages_from_pdf_reads_at_most_max_pages(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake_doc = FakeDoc(["First page", "Second page"])
+    install_fake_fitz(monkeypatch, fake_doc)
+
+    pages = extract_pages_from_pdf(tmp_path / "paper.pdf", max_pages=1)
+
+    assert [page.text for page in pages] == ["First page"]
+    assert [page.get_text_calls for page in fake_doc.pages] == [1, 0]
+    assert fake_doc.closed is True
+
+
+@pytest.mark.parametrize("max_pages", [0, -1])
+def test_extract_pages_from_pdf_non_positive_max_pages_reads_no_page_text(
+    monkeypatch, tmp_path: Path, max_pages: int
+) -> None:
+    fake_doc = FakeDoc(["First page", "Second page"])
+    install_fake_fitz(monkeypatch, fake_doc)
+
+    pages = extract_pages_from_pdf(tmp_path / "paper.pdf", max_pages=max_pages)
+
+    assert pages == []
+    assert fake_doc.iterations == 0
+    assert [page.get_text_calls for page in fake_doc.pages] == [0, 0]
     assert fake_doc.closed is True

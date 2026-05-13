@@ -12,6 +12,15 @@ def extract_pages_from_text_file(path: Path) -> list[PageText]:
 
 
 def extract_pages_from_pdf(path: Path, max_pages: Optional[int] = None) -> list[PageText]:
+    """
+    Extract page text from a PDF.
+
+    PageText.text preserves each page.get_text() result exactly. PageText.char_start
+    and PageText.char_end are offsets into a virtual full text formed by joining
+    page texts with a single "\n" separator between pages.
+    """
+    limit = None if max_pages is None else max(0, max_pages)
+
     try:
         import fitz
     except ImportError as exc:
@@ -24,8 +33,11 @@ def extract_pages_from_pdf(path: Path, max_pages: Optional[int] = None) -> list[
     char_start = 0
 
     try:
+        if limit == 0:
+            return pages
+
         for index, page in enumerate(doc):
-            if max_pages is not None and index >= max_pages:
+            if limit is not None and index >= limit:
                 break
 
             text = page.get_text()
