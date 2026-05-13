@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
 
 import pytest
 
@@ -12,14 +12,17 @@ from src.reader.staged_reader import StagedPaperReader
 
 
 class FakeLLM:
+    def __init__(self) -> None:
+        self.calls: List[Tuple[str, Optional[str], Optional[float]]] = []
+
     async def generate_json(
         self,
         prompt: str,
-        *,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
     ) -> Any:
         stage = self._stage_from_prompt(prompt)
+        self.calls.append((stage, model, temperature))
         if stage == "summary":
             return {
                 "summary": {
@@ -62,7 +65,8 @@ async def test_text_file_to_reading_artifacts(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     pages = extract_pages_from_text_file(text_path)
-    reader = StagedPaperReader(FakeLLM(), model="gemini-2.5-pro")
+    llm = FakeLLM()
+    reader = StagedPaperReader(llm, model="gemini-2.5-pro")
 
     package = await reader.read(
         paper_id="sample",
@@ -79,3 +83,10 @@ async def test_text_file_to_reading_artifacts(tmp_path: Path) -> None:
     assert "Utility scoring is the central mechanism." in markdown_path.read_text(
         encoding="utf-8"
     )
+    assert llm.calls == [
+        ("summary", "gemini-2.5-pro", 0.1),
+        ("section_notes", "gemini-2.5-pro", 0.1),
+        ("method", "gemini-2.5-pro", 0.1),
+        ("experiments", "gemini-2.5-pro", 0.1),
+        ("topic_relation", "gemini-2.5-pro", 0.1),
+    ]
