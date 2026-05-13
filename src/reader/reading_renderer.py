@@ -110,7 +110,7 @@ def write_reading_package(
     package: PaperReadingPackage,
     output_dir: Path,
 ) -> tuple[Path, Path]:
-    _validate_safe_paper_id(package.paper_id)
+    validate_safe_paper_id(package.paper_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     resolved_output_dir = output_dir.resolve()
     json_path = output_dir / f"{package.paper_id}.json"
@@ -127,7 +127,7 @@ def write_reading_package(
     return json_path, markdown_path
 
 
-def _validate_safe_paper_id(paper_id: str) -> None:
+def validate_safe_paper_id(paper_id: str) -> None:
     if (
         not paper_id
         or paper_id in {".", ".."}

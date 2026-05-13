@@ -6,6 +6,7 @@ import pytest
 
 from src.reader.reading_renderer import (
     render_reading_markdown,
+    validate_safe_paper_id,
     write_reading_package,
 )
 from src.reader.staged_models import (
@@ -140,3 +141,14 @@ def test_write_reading_package_rejects_unsafe_paper_id(tmp_path, paper_id: str) 
 
     with pytest.raises(ValueError):
         write_reading_package(package, tmp_path)
+
+
+@pytest.mark.parametrize("paper_id", ["sample", "sample_paper-01", "2401.00001"])
+def test_validate_safe_paper_id_accepts_safe_ids(paper_id: str) -> None:
+    validate_safe_paper_id(paper_id)
+
+
+@pytest.mark.parametrize("paper_id", ["../escape", "..\\escape", "C:escape", ""])
+def test_validate_safe_paper_id_rejects_unsafe_ids(paper_id: str) -> None:
+    with pytest.raises(ValueError):
+        validate_safe_paper_id(paper_id)

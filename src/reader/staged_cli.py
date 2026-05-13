@@ -10,12 +10,17 @@ from dotenv import load_dotenv
 
 from src.config import LLMConfig, load_config
 from src.reader.page_extractor import extract_pages_from_pdf, extract_pages_from_text_file
-from src.reader.reading_renderer import write_reading_package
+from src.reader.reading_renderer import validate_safe_paper_id, write_reading_package
 from src.reader.staged_reader import StagedPaperReader
 from src.survey.models import TopicProfile
 
 
 async def cmd_read_staged(args) -> None:
+    try:
+        validate_safe_paper_id(args.paper_id)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
     try:
         from src.llm.gemini_client import GeminiClient
     except ModuleNotFoundError as exc:
@@ -41,17 +46,18 @@ async def cmd_read_staged(args) -> None:
         temperature=app_config.llm.temperature,
     )
 
+    topic_path = Path(args.topic) if args.topic else None
+    topic = _load_topic(topic_path) if topic_path else None
+    output_dir = _resolve_output_dir(
+        args,
+        topic_path=topic_path,
+    )
+
     source_path = Path(args.pdf or args.text_file)
     if args.pdf:
         pages = extract_pages_from_pdf(source_path)
     else:
         pages = extract_pages_from_text_file(source_path)
-
-    topic = _load_topic_profile(Path(args.topic)) if args.topic else None
-    output_dir = _resolve_output_dir(
-        args,
-        topic_path=Path(args.topic) if args.topic else None,
-    )
 
     reader = StagedPaperReader(GeminiClient(llm_config), model=llm_config.reader_model)
     package = await reader.read(
@@ -71,11 +77,25 @@ def run_read_staged(args) -> None:
     asyncio.run(cmd_read_staged(args))
 
 
-def _load_topic_profile(path: Path) -> TopicProfile:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+def _load_topic(path: Path) -> TopicProfile:
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise SystemExit(f"Error loading topic YAML {path}: not found") from exc
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"Error loading topic YAML {path}: invalid YAML: {exc}") from exc
+
+    if raw is None:
+        raise SystemExit(f"Error loading topic YAML {path}: empty YAML")
     if not isinstance(raw, dict):
-        raise ValueError(f"Topic YAML must contain an object: {path}")
-    return TopicProfile.from_dict(raw)
+        raise SystemExit(f"Error loading topic YAML {path}: expected mapping object")
+
+    try:
+        return TopicProfile.from_dict(raw)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(
+            f"Error loading topic YAML {path}: malformed TopicProfile: {exc}"
+        ) from exc
 
 
 def _resolve_output_dir(args, topic_path: Optional[Path]) -> Path:

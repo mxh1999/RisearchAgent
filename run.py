@@ -32,14 +32,33 @@ class PaperReaderArgumentParser(argparse.ArgumentParser):
                 )
             )
             if staged:
+                if getattr(parsed, "arxiv_id", None):
+                    self.error("read --staged does not support positional arxiv_id")
                 if source_count != 1:
                     self.error("read --staged requires exactly one of --pdf or --text-file")
                 if not getattr(parsed, "paper_id", None):
                     self.error("read --staged requires --paper-id")
                 if not getattr(parsed, "title", None):
                     self.error("read --staged requires --title")
-            elif not getattr(parsed, "arxiv_id", None):
-                self.error("read requires arxiv_id unless --staged is set")
+            else:
+                staged_only_flags = {
+                    "--pdf": getattr(parsed, "pdf", None),
+                    "--text-file": getattr(parsed, "text_file", None),
+                    "--paper-id": getattr(parsed, "paper_id", None),
+                    "--title": getattr(parsed, "title", None),
+                    "--topic": getattr(parsed, "topic", None),
+                    "--output-root": getattr(parsed, "output_root", None),
+                }
+                supplied_flags = [
+                    flag for flag, value in staged_only_flags.items() if value is not None
+                ]
+                if supplied_flags:
+                    self.error(
+                        "read staged-only flags require --staged: "
+                        + ", ".join(supplied_flags)
+                    )
+                if not getattr(parsed, "arxiv_id", None):
+                    self.error("read requires arxiv_id unless --staged is set")
         return parsed
 
 
