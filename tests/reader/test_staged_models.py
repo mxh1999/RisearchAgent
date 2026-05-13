@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+from src.reader.staged_models import (
+    Evidence,
+    ExperimentRecord,
+    MethodModule,
+    PaperReadingPackage,
+    PageText,
+    PaperSummary,
+    TopicRelation,
+)
+
+
+def test_page_text_to_dict_round_trip() -> None:
+    page = PageText(page=1, text="Abstract text", char_start=0, char_end=13)
+
+    restored = PageText.from_dict(page.to_dict())
+
+    assert restored == page
+
+
+def test_reading_package_round_trip() -> None:
+    package = PaperReadingPackage(
+        paper_id="sample_paper",
+        title="Sample Paper",
+        source_path="paper/sample.pdf",
+        pages=[PageText(page=1, text="Introduction text", char_start=0, char_end=17)],
+        summary=PaperSummary(
+            problem="The paper studies navigation decisions.",
+            method="It scores candidate viewpoints.",
+            takeaway="The key idea is learned utility over memory.",
+            contributions=["Task-conditioned utility scoring"],
+        ),
+        claims=[
+            Evidence(
+                text="The method improves SPL.",
+                page=7,
+                section="Experiments",
+                quote="Our method improves SPL by 5 points.",
+                confidence="high",
+            )
+        ],
+        method_modules=[
+            MethodModule(
+                name="Utility Head",
+                role="Scores object and frontier candidates.",
+                inputs=["3D memory", "goal embedding"],
+                outputs=["candidate utility"],
+            )
+        ],
+        experiments=[
+            ExperimentRecord(
+                benchmark="GOAT-Bench",
+                setting="val unseen",
+                metric="SPL",
+                method="SampleNav",
+                value=35.1,
+                higher_is_better=True,
+                source=Evidence(
+                    text="SPL result",
+                    page=8,
+                    section="Experiments",
+                    quote="SampleNav obtains 35.1 SPL.",
+                    confidence="high",
+                ),
+            )
+        ],
+        topic_relation=TopicRelation(
+            relevance="core",
+            concept_axes=["task_conditioned_utility"],
+            collision_risk="medium",
+            differentiation="Uses explicit utility rather than prompted reasoning.",
+        ),
+        critique=["Needs stronger baseline comparisons."],
+        follow_up_questions=["How is utility supervised?"],
+    )
+
+    restored = PaperReadingPackage.from_dict(package.to_dict())
+
+    assert restored == package
+    assert restored.experiments[0].source.page == 8
