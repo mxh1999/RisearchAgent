@@ -54,6 +54,7 @@ def test_extract_pages_from_pdf_uses_lazy_fitz(
     pages = extract_pages_from_pdf(pdf_path, max_pages=5)
 
     assert [page.page for page in pages] == [1, 2]
-    assert pages[0].text == "First page\n"
+    assert pages[0].text == "First page"
+    assert pages[0].char_end == len("First page")
     assert pages[1].char_start == len("First page\n")
     assert fake_doc.closed is True

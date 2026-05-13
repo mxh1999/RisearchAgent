@@ -29,9 +29,6 @@ def extract_pages_from_pdf(path: Path, max_pages: Optional[int] = None) -> list[
                 break
 
             text = page.get_text()
-            if not text.endswith("\n"):
-                text += "\n"
-
             char_end = char_start + len(text)
             pages.append(
                 PageText(
@@ -41,7 +38,7 @@ def extract_pages_from_pdf(path: Path, max_pages: Optional[int] = None) -> list[
                     char_end=char_end,
                 )
             )
-            char_start = char_end
+            char_start = char_end + 1
     finally:
         doc.close()
 
