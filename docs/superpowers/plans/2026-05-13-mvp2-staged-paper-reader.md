@@ -189,7 +189,7 @@ Create `src/reader/staged_models.py`:
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass(frozen=True)
@@ -328,11 +328,11 @@ class PaperReadingPackage:
     title: str
     source_path: str
     pages: list[PageText] = field(default_factory=list)
-    summary: PaperSummary | None = None
+    summary: Optional[PaperSummary] = None
     claims: list[Evidence] = field(default_factory=list)
     method_modules: list[MethodModule] = field(default_factory=list)
     experiments: list[ExperimentRecord] = field(default_factory=list)
-    topic_relation: TopicRelation | None = None
+    topic_relation: Optional[TopicRelation] = None
     critique: list[str] = field(default_factory=list)
     follow_up_questions: list[str] = field(default_factory=list)
 
@@ -489,6 +489,7 @@ Create `src/reader/page_extractor.py`:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from src.reader.staged_models import PageText
 
@@ -498,7 +499,7 @@ def extract_pages_from_text_file(path: Path) -> list[PageText]:
     return [PageText(page=1, text=text, char_start=0, char_end=len(text))]
 
 
-def extract_pages_from_pdf(path: Path, max_pages: int | None = None) -> list[PageText]:
+def extract_pages_from_pdf(path: Path, max_pages: Optional[int] = None) -> list[PageText]:
     try:
         import fitz
     except ModuleNotFoundError as exc:
@@ -561,7 +562,7 @@ Create `tests/reader/test_staged_reader.py`:
 ```python
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -578,8 +579,8 @@ class FakeLLM:
         self,
         prompt: str,
         *,
-        model: str | None = None,
-        temperature: float | None = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Any:
         self.prompts.append(prompt)
         if "Stage: summary" in prompt:
@@ -695,8 +696,8 @@ async def test_staged_reader_rejects_malformed_summary() -> None:
             self,
             prompt: str,
             *,
-            model: str | None = None,
-            temperature: float | None = None,
+            model: Optional[str] = None,
+            temperature: Optional[float] = None,
         ) -> Any:
             if "Stage: summary" in prompt:
                 return {"problem": ["not a string"]}
@@ -737,7 +738,7 @@ Create `src/reader/staged_reader.py`:
 ```python
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from src.reader.staged_models import (
     Evidence,
@@ -756,8 +757,8 @@ class StagedReaderLLM(Protocol):
         self,
         prompt: str,
         *,
-        model: str | None = None,
-        temperature: float | None = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Any:
         pass
 
@@ -774,7 +775,7 @@ class StagedPaperReader:
         title: str,
         source_path: str,
         pages: list[PageText],
-        topic: TopicProfile | None = None,
+        topic: Optional[TopicProfile] = None,
     ) -> PaperReadingPackage:
         text = _pages_to_prompt_text(pages)
         topic_text = _topic_to_prompt_text(topic)
@@ -926,7 +927,7 @@ def _pages_to_prompt_text(pages: list[PageText], max_chars: int = 60000) -> str:
     return text[:max_chars]
 
 
-def _topic_to_prompt_text(topic: TopicProfile | None) -> str:
+def _topic_to_prompt_text(topic: Optional[TopicProfile]) -> str:
     if topic is None:
         return "No topic profile provided."
     axes = ", ".join(axis.name for axis in topic.concept_axes)
@@ -1379,7 +1380,7 @@ def _load_topic(path: Path) -> TopicProfile:
     return TopicProfile.from_dict(raw)
 
 
-def _resolve_output_dir(args, topic: TopicProfile | None) -> Path:
+def _resolve_output_dir(args, topic: Optional[TopicProfile]) -> Path:
     if args.topic:
         return Path(args.topic).parent / "papers"
     return Path(args.output_root or "data/readings")
@@ -1472,7 +1473,7 @@ Create `tests/reader/test_staged_workflow.py`:
 ```python
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -1486,8 +1487,8 @@ class FakeLLM:
         self,
         prompt: str,
         *,
-        model: str | None = None,
-        temperature: float | None = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Any:
         if "Stage: summary" in prompt:
             return {
