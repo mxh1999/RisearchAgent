@@ -22,6 +22,24 @@ class PaperReaderArgumentParser(argparse.ArgumentParser):
                 self.error(
                     "survey refine requires exactly one of topic_text or --from-note"
                 )
+        if getattr(parsed, "command", None) == "read":
+            staged = bool(getattr(parsed, "staged", False))
+            source_count = sum(
+                bool(value)
+                for value in (
+                    getattr(parsed, "pdf", None),
+                    getattr(parsed, "text_file", None),
+                )
+            )
+            if staged:
+                if source_count != 1:
+                    self.error("read --staged requires exactly one of --pdf or --text-file")
+                if not getattr(parsed, "paper_id", None):
+                    self.error("read --staged requires --paper-id")
+                if not getattr(parsed, "title", None):
+                    self.error("read --staged requires --title")
+            elif not getattr(parsed, "arxiv_id", None):
+                self.error("read requires arxiv_id unless --staged is set")
         return parsed
 
 
@@ -290,7 +308,26 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("filter", help="Filter papers by relevance")
 
     read_parser = subparsers.add_parser("read", help="Deep-read a specific paper")
-    read_parser.add_argument("arxiv_id", help="ArXiv paper ID (e.g. 2401.12345)")
+    read_parser.add_argument(
+        "arxiv_id",
+        nargs="?",
+        help="ArXiv paper ID (e.g. 2401.12345)",
+    )
+    read_parser.add_argument(
+        "--staged",
+        action="store_true",
+        help="Read a local PDF or text file with staged extraction",
+    )
+    source_group = read_parser.add_mutually_exclusive_group()
+    source_group.add_argument("--pdf", help="Local PDF source path")
+    source_group.add_argument("--text-file", help="Local text source path")
+    read_parser.add_argument("--paper-id", help="Stable output paper ID")
+    read_parser.add_argument("--title", help="Paper title")
+    read_parser.add_argument("--topic", help="Topic YAML path")
+    read_parser.add_argument(
+        "--output-root",
+        help="Output root for staged readings without --topic",
+    )
 
     subparsers.add_parser("pipeline", help="Run full 5-stage pipeline")
     subparsers.add_parser("sota", help="Show SOTA tracking table")
@@ -363,6 +400,12 @@ def main():
         from src.survey.cli import run_survey_command
 
         run_survey_command(args)
+        return
+
+    if args.command == "read" and getattr(args, "staged", False):
+        from src.reader.staged_cli import run_read_staged
+
+        run_read_staged(args)
         return
 
     config = load_config(args.config)
