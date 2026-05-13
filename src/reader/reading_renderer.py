@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from src.reader.staged_models import PaperReadingPackage
+
+_WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
 
 
 def render_reading_markdown(package: PaperReadingPackage) -> str:
@@ -107,9 +110,13 @@ def write_reading_package(
     package: PaperReadingPackage,
     output_dir: Path,
 ) -> tuple[Path, Path]:
+    _validate_safe_paper_id(package.paper_id)
     output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_output_dir = output_dir.resolve()
     json_path = output_dir / f"{package.paper_id}.json"
     markdown_path = output_dir / f"{package.paper_id}.reading.md"
+    _ensure_path_under(json_path, resolved_output_dir)
+    _ensure_path_under(markdown_path, resolved_output_dir)
 
     json_path.write_text(
         json.dumps(package.to_dict(), indent=2, ensure_ascii=False),
@@ -118,6 +125,26 @@ def write_reading_package(
     markdown_path.write_text(render_reading_markdown(package), encoding="utf-8")
 
     return json_path, markdown_path
+
+
+def _validate_safe_paper_id(paper_id: str) -> None:
+    if (
+        not paper_id
+        or paper_id in {".", ".."}
+        or "/" in paper_id
+        or "\\" in paper_id
+        or _WINDOWS_DRIVE_PATTERN.match(paper_id)
+        or PurePosixPath(paper_id).is_absolute()
+        or PureWindowsPath(paper_id).is_absolute()
+    ):
+        raise ValueError(f"Unsafe paper_id: {paper_id!r}")
+
+
+def _ensure_path_under(path: Path, resolved_output_dir: Path) -> None:
+    try:
+        path.resolve().relative_to(resolved_output_dir)
+    except ValueError as exc:
+        raise ValueError(f"Output path escapes output_dir: {path}") from exc
 
 
 def _markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
@@ -135,7 +162,8 @@ def _markdown_table_row(values: list[str]) -> str:
 
 
 def _escape_table_cell(value: str) -> str:
-    return str(value).replace("\n", "<br>").replace("|", r"\|")
+    normalized = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.replace("\n", "<br>").replace("|", r"\|")
 
 
 def _markdown_list(values: list[str]) -> list[str]:

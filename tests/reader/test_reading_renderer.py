@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from src.reader.reading_renderer import (
     render_reading_markdown,
     write_reading_package,
@@ -95,4 +97,46 @@ def test_write_reading_package_writes_json_and_markdown(tmp_path) -> None:
     assert json_path.name == "sample_paper.json"
     assert markdown_path.name == "sample_paper.reading.md"
     assert json.loads(json_path.read_text(encoding="utf-8"))["paper_id"] == "sample_paper"
+    assert '\n  "paper_id"' in json_path.read_text(encoding="utf-8")
     assert "# Sample Paper" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_render_reading_markdown_escapes_table_pipes_and_newlines() -> None:
+    package = _reading_package()
+    package.claims[0] = Evidence(
+        text="Claim | one\r\nClaim | two",
+        page=7,
+        section="Experiments",
+        quote="Quote | one\rQuote | two",
+        confidence="high",
+    )
+
+    markdown = render_reading_markdown(package)
+
+    claim_rows = [
+        line for line in markdown.splitlines() if "Claim \\| one<br>Claim \\| two" in line
+    ]
+    assert len(claim_rows) == 1
+    assert "Quote \\| one<br>Quote \\| two" in claim_rows[0]
+    assert "\r" not in claim_rows[0]
+
+
+@pytest.mark.parametrize("paper_id", ["../escape", "..\\escape", "C:escape", ""])
+def test_write_reading_package_rejects_unsafe_paper_id(tmp_path, paper_id: str) -> None:
+    package = _reading_package()
+    package = PaperReadingPackage(
+        paper_id=paper_id,
+        title=package.title,
+        source_path=package.source_path,
+        pages=package.pages,
+        summary=package.summary,
+        claims=package.claims,
+        method_modules=package.method_modules,
+        experiments=package.experiments,
+        topic_relation=package.topic_relation,
+        critique=package.critique,
+        follow_up_questions=package.follow_up_questions,
+    )
+
+    with pytest.raises(ValueError):
+        write_reading_package(package, tmp_path)
