@@ -77,3 +77,14 @@ def test_load_reading_packages_rejects_malformed_package(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="Malformed reading package"):
         load_reading_packages(tmp_path)
+
+
+@pytest.mark.parametrize("raw", [[], None])
+def test_load_reading_packages_rejects_non_object_json_roots(
+    tmp_path: Path, raw: object
+) -> None:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "bad.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Malformed reading package"):
+        load_reading_packages(tmp_path)

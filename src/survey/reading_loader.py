@@ -22,6 +22,9 @@ def load_reading_packages(readings_dir: Path) -> list[PaperReadingPackage]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Invalid reading package JSON {path}: {exc}") from exc
 
+        if not isinstance(raw, dict):
+            raise ValueError(f"Malformed reading package {path}: expected JSON object")
+
         try:
             package = PaperReadingPackage.from_dict(raw)
         except (KeyError, TypeError, ValueError) as exc:
