@@ -54,6 +54,16 @@ def _write_package(topic_dir: Path, package: PaperReadingPackage) -> None:
     )
 
 
+def _assert_single_auto_block(text: str, block_name: str) -> None:
+    assert text.count(f"<!-- BEGIN AUTO:{block_name} -->") == 1
+    assert text.count(f"<!-- END AUTO:{block_name} -->") == 1
+
+
+def _assert_absent(text: str, values: list[str]) -> None:
+    for value in values:
+        assert value not in text
+
+
 class FakeLLM:
     async def generate_json(
         self,
@@ -160,9 +170,27 @@ def test_fake_synthesize_workflow_updates_artifacts(tmp_path: Path) -> None:
     positioning = (topic_dir / "positioning.md").read_text(encoding="utf-8")
     references = (topic_dir / "references.md").read_text(encoding="utf-8")
 
+    _assert_single_auto_block(survey, "taxonomy")
+    _assert_single_auto_block(papers, "paper-map")
+    _assert_single_auto_block(positioning, "positioning")
+    _assert_single_auto_block(references, "references")
+
+    _assert_absent(
+        survey,
+        [
+            "No taxonomy has been generated yet.",
+            "Old taxonomy",
+        ],
+    )
+    _assert_absent(papers, ["No papers have been classified yet."])
+    _assert_absent(
+        positioning,
+        ["No positioning analysis has been generated yet."],
+    )
+    _assert_absent(references, ["No references have been collected yet."])
+
     assert "Manual survey text." in survey
     assert "Explicit utility models" in survey
-    assert "Old taxonomy" not in survey
     assert "MTU3D" in papers
     assert "VLFM" in papers
     assert "General utility over 3D memory." in positioning
