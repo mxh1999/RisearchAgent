@@ -26,6 +26,16 @@ class TopicArtifactManager:
         self.topics_root = topics_root
 
     def create_or_update_topic(self, profile: TopicProfile) -> TopicArtifactPaths:
+        paths = self.ensure_topic_artifacts(profile)
+        topic_yaml = paths.topic_yaml
+        topic_yaml.write_text(
+            yaml.safe_dump(profile.to_dict(), sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+
+        return paths
+
+    def ensure_topic_artifacts(self, profile: TopicProfile) -> TopicArtifactPaths:
         self._validate_topic_id(profile.topic_id)
         topic_dir = self.topics_root / profile.topic_id
         state_dir = topic_dir / "state"
@@ -34,11 +44,6 @@ class TopicArtifactManager:
         papers_dir.mkdir(parents=True, exist_ok=True)
 
         topic_yaml = topic_dir / "topic.yaml"
-        topic_yaml.write_text(
-            yaml.safe_dump(profile.to_dict(), sort_keys=False, allow_unicode=True),
-            encoding="utf-8",
-        )
-
         self._ensure_file(
             topic_dir / "survey.md",
             f"# {profile.name} Survey\n\n"

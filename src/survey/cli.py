@@ -65,6 +65,19 @@ async def cmd_survey_refine(args) -> None:
 
 
 async def cmd_survey_synthesize(args) -> None:
+    topic_path = Path(args.topic)
+    topic = _load_topic(topic_path)
+    topic_dir = topic_path.parent
+    _validate_topic_path(topic, topic_dir)
+    readings_dir = Path(args.readings_dir) if args.readings_dir else topic_dir / "papers"
+
+    from src.survey.reading_loader import load_reading_packages
+
+    try:
+        packages = load_reading_packages(readings_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(f"Error loading reading packages: {exc}") from exc
+
     try:
         from src.llm.gemini_client import GeminiClient
     except ModuleNotFoundError as exc:
@@ -75,19 +88,6 @@ async def cmd_survey_synthesize(args) -> None:
             ) from exc
         raise
 
-    load_dotenv()
-    app_config = load_config(args.config)
-    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
-    if not api_key:
-        raise SystemExit("Error: GEMINI_API_KEY environment variable not set.")
-
-    topic_path = Path(args.topic)
-    topic = _load_topic(topic_path)
-    topic_dir = topic_path.parent
-    _validate_topic_path(topic, topic_dir)
-    readings_dir = Path(args.readings_dir) if args.readings_dir else topic_dir / "papers"
-
-    from src.survey.reading_loader import load_reading_packages
     from src.survey.survey_renderer import (
         render_paper_map_markdown,
         render_positioning_markdown,
@@ -96,10 +96,11 @@ async def cmd_survey_synthesize(args) -> None:
     )
     from src.survey.synthesizer import SurveySynthesizer
 
-    try:
-        packages = load_reading_packages(readings_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        raise SystemExit(f"Error loading reading packages: {exc}") from exc
+    load_dotenv()
+    app_config = load_config(args.config)
+    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
+    if not api_key:
+        raise SystemExit("Error: GEMINI_API_KEY environment variable not set.")
 
     llm_config = LLMConfig(
         filter_model=app_config.llm.filter_model,
@@ -118,7 +119,7 @@ async def cmd_survey_synthesize(args) -> None:
         raise SystemExit(f"Error synthesizing survey: {exc}") from exc
 
     manager = TopicArtifactManager(topic_dir.parent)
-    manager.create_or_update_topic(topic)
+    manager.ensure_topic_artifacts(topic)
     manager.update_auto_block(
         topic_dir / "survey.md", "taxonomy", render_taxonomy_markdown(synthesis)
     )
