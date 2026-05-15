@@ -285,19 +285,14 @@ def _parse_topic_relation(raw: Any) -> TopicRelation:
         relation["collision_risk"] = "unknown"
     if relation.get("differentiation") is None:
         relation["differentiation"] = ""
-    _require_string(
-        _required(relation, "relevance", "topic_relation.relevance"),
-        "topic_relation.relevance",
+    relation["relevance"] = _coerce_text(
+        _required(relation, "relevance", "topic_relation.relevance")
     )
     relation["concept_axes"] = _coerce_axis_list(relation.get("concept_axes", []))
     if "collision_risk" in relation:
-        _require_string(
-            relation["collision_risk"], "topic_relation.collision_risk"
-        )
+        relation["collision_risk"] = _coerce_text(relation["collision_risk"])
     if "differentiation" in relation:
-        _require_string(
-            relation["differentiation"], "topic_relation.differentiation"
-        )
+        relation["differentiation"] = _coerce_text(relation["differentiation"])
     return TopicRelation.from_dict(relation)
 
 

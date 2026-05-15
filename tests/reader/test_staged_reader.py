@@ -485,6 +485,28 @@ async def test_staged_reader_coerces_topic_relation_axis_map() -> None:
 
 
 @pytest.mark.asyncio
+async def test_staged_reader_coerces_topic_relation_text_drift() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(
+        llm=FakeLLM(topic_relevance={"level": "adjacent", "reason": "2D value map"}),
+        model="test-model",
+    )
+
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=None,
+    )
+
+    assert package.topic_relation is not None
+    assert package.topic_relation.relevance == (
+        '{"level": "adjacent", "reason": "2D value map"}'
+    )
+
+
+@pytest.mark.asyncio
 async def test_staged_reader_rejects_missing_experiment_source_quote() -> None:
     title, pages = _pages()
     reader = StagedPaperReader(
