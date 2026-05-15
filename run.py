@@ -399,6 +399,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Topic artifact root directory (default: data/topics)",
     )
 
+    synthesize_parser = survey_subparsers.add_parser(
+        "synthesize",
+        help="Synthesize survey artifacts from staged reading packages",
+    )
+    synthesize_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    synthesize_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+
     return parser
 
 

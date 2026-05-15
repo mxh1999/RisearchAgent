@@ -48,6 +48,35 @@ def test_survey_refine_rejects_both_text_and_note() -> None:
     assert exc_info.value.code == 2
 
 
+def test_survey_synthesize_requires_topic() -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["survey", "synthesize"])
+
+    assert exc_info.value.code == 2
+
+
+def test_survey_synthesize_accepts_topic_and_readings_dir() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "survey",
+            "synthesize",
+            "--topic",
+            "data/topics/topic/topic.yaml",
+            "--readings-dir",
+            "data/readings",
+        ]
+    )
+
+    assert args.command == "survey"
+    assert args.survey_command == "synthesize"
+    assert args.topic == "data/topics/topic/topic.yaml"
+    assert args.readings_dir == "data/readings"
+
+
 def test_survey_cli_import_does_not_require_google_genai() -> None:
     repo_root = Path(__file__).parents[2]
     code = textwrap.dedent(
