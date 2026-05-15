@@ -71,6 +71,8 @@ class FakeLLM:
         higher_is_better: Any = True,
         missing_experiment_quote: bool = False,
         critique: Any = None,
+        follow_up_questions: Any = None,
+        experiments_response: Any = None,
         experiment_setting: Any = "val unseen",
         evidence_page: Any = 2,
         evidence_confidence: Any = "high",
@@ -86,6 +88,12 @@ class FakeLLM:
             if critique is not None
             else ["Needs stronger unseen-environment analysis."]
         )
+        self.follow_up_questions = (
+            follow_up_questions
+            if follow_up_questions is not None
+            else ["How is utility supervision collected?"]
+        )
+        self.experiments_response = experiments_response
         self.experiment_setting = experiment_setting
         self.evidence_page = evidence_page
         self.evidence_confidence = evidence_confidence
@@ -126,7 +134,7 @@ class FakeLLM:
             return {
                 "claims": [claim],
                 "critique": self.critique,
-                "follow_up_questions": ["How is utility supervision collected?"],
+                "follow_up_questions": self.follow_up_questions,
             }
         if stage == "method":
             return {
@@ -145,19 +153,20 @@ class FakeLLM:
             source["confidence"] = self.evidence_confidence
             if self.missing_experiment_quote:
                 del source["quote"]
-            return {
-                "experiments": [
-                    {
-                        "benchmark": "GOAT-Bench",
-                        "setting": self.experiment_setting,
-                        "metric": "SPL",
-                        "method": "UtilityNav",
-                        "value": self.experiment_value,
-                        "higher_is_better": self.higher_is_better,
-                        "source": source,
-                    }
-                ]
-            }
+            experiments = [
+                {
+                    "benchmark": "GOAT-Bench",
+                    "setting": self.experiment_setting,
+                    "metric": "SPL",
+                    "method": "UtilityNav",
+                    "value": self.experiment_value,
+                    "higher_is_better": self.higher_is_better,
+                    "source": source,
+                }
+            ]
+            if self.experiments_response == "bare_list":
+                return experiments
+            return {"experiments": experiments}
         if stage == "topic_relation":
             return {
                 "topic_relation": {
@@ -334,6 +343,50 @@ async def test_staged_reader_accepts_single_string_critique() -> None:
     )
 
     assert package.critique == ["Needs stronger unseen-environment analysis."]
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_coerces_text_note_drift() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(
+        llm=FakeLLM(
+            critique=[{"issue": "Needs stronger baselines"}, 3],
+            follow_up_questions={"question": "Which data supervises utility?"},
+        ),
+        model="test-model",
+    )
+
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=_topic_profile(),
+    )
+
+    assert package.critique == ['{"issue": "Needs stronger baselines"}', "3"]
+    assert package.follow_up_questions == [
+        '{"question": "Which data supervises utility?"}'
+    ]
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_accepts_bare_experiments_list() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(
+        llm=FakeLLM(experiments_response="bare_list"),
+        model="test-model",
+    )
+
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=_topic_profile(),
+    )
+
+    assert package.experiments[0].benchmark == "GOAT-Bench"
 
 
 @pytest.mark.asyncio

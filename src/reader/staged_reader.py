@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any, Optional, Protocol, Sequence
 
@@ -216,9 +217,9 @@ def _parse_summary(raw: Any) -> PaperSummary:
 def _parse_section_notes(raw: Any) -> tuple[list[Evidence], list[str], list[str]]:
     root = _require_mapping(raw, "section_notes_response")
     claims_raw = _require_list(root.get("claims", []), "claims")
-    critique = _require_string_list(root.get("critique", []), "critique")
-    follow_up_questions = _require_string_list(
-        root.get("follow_up_questions", []), "follow_up_questions"
+    critique = _coerce_text_list(root.get("critique", []))
+    follow_up_questions = _coerce_text_list(
+        root.get("follow_up_questions", [])
     )
 
     claims = []
@@ -247,7 +248,9 @@ def _parse_method(raw: Any) -> list[MethodModule]:
 
 
 def _parse_experiments(raw: Any) -> list[ExperimentRecord]:
-    root = _require_mapping(raw, "experiments_response")
+    root = {"experiments": raw} if isinstance(raw, list) else _require_mapping(
+        raw, "experiments_response"
+    )
     records_raw = _require_list(root.get("experiments", []), "experiments")
     records = []
     for index, record_raw in enumerate(records_raw):
@@ -349,6 +352,22 @@ def _require_string_list(raw: Any, path: str) -> list[str]:
     for index, item in enumerate(items):
         _require_string(item, f"{path}[{index}]")
     return items
+
+
+def _coerce_text_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [_coerce_text(item) for item in raw]
+    return [_coerce_text(raw)]
+
+
+def _coerce_text(raw: Any) -> str:
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, (Mapping, list)):
+        return json.dumps(raw, ensure_ascii=False, sort_keys=True)
+    return str(raw)
 
 
 def _require_int(raw: Any, path: str) -> int:
