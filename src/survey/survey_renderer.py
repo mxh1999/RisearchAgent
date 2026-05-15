@@ -3,6 +3,11 @@ from __future__ import annotations
 from src.survey.synthesis_models import SurveySynthesis
 
 
+AUTO_BLOCK_MARKER_REPLACEMENTS = {
+    "<!-- BEGIN AUTO:": "<!-- BEGIN-AUTO:",
+    "<!-- END AUTO:": "<!-- END-AUTO:",
+}
+
 ROLE_HEADINGS = {
     "core": "Core",
     "adjacent": "Adjacent",
@@ -18,12 +23,12 @@ def render_taxonomy_markdown(synthesis: SurveySynthesis) -> str:
     for group in synthesis.taxonomy:
         lines.extend(
             [
-                f"### {group.name}",
+                f"### {_sanitize_text(group.name)}",
                 "",
-                group.description,
+                _sanitize_text(group.description),
                 "",
                 f"- Papers: {_format_ids(group.paper_ids)}",
-                f"- Key distinction: {group.key_distinction}",
+                f"- Key distinction: {_sanitize_text(group.key_distinction)}",
                 "",
             ]
         )
@@ -43,10 +48,10 @@ def render_paper_map_markdown(synthesis: SurveySynthesis) -> str:
         for item in items:
             lines.extend(
                 [
-                    f"### {item.title} (`{item.paper_id}`)",
+                    f"### {_sanitize_text(item.title)} (`{_sanitize_text(item.paper_id)}`)",
                     "",
-                    f"- Rationale: {item.rationale}",
-                    f"- Evidence: {item.evidence or 'N/A'}",
+                    f"- Rationale: {_sanitize_text(item.rationale)}",
+                    f"- Evidence: {_sanitize_text(item.evidence) if item.evidence else 'N/A'}",
                     "",
                 ]
             )
@@ -58,15 +63,15 @@ def render_positioning_markdown(synthesis: SurveySynthesis) -> str:
     lines = [
         "## Thesis Gap",
         "",
-        positioning.thesis_gap,
+        _sanitize_text(positioning.thesis_gap),
         "",
         "## Novelty Claim",
         "",
-        positioning.novelty_claim,
+        _sanitize_text(positioning.novelty_claim),
         "",
         "## Recommended Positioning",
         "",
-        positioning.recommended_positioning,
+        _sanitize_text(positioning.recommended_positioning),
         "",
         "## Collision Risks",
         "",
@@ -78,10 +83,10 @@ def render_positioning_markdown(synthesis: SurveySynthesis) -> str:
 def render_references_markdown(synthesis: SurveySynthesis) -> str:
     rows = [
         [
-            f"`{entry.paper_id}`",
-            entry.title,
-            entry.why_relevant,
-            entry.evidence or "N/A",
+            f"`{_sanitize_text(entry.paper_id)}`",
+            _sanitize_text(entry.title),
+            _sanitize_text(entry.why_relevant),
+            _sanitize_text(entry.evidence) if entry.evidence else "N/A",
         ]
         for entry in synthesis.references
     ]
@@ -91,13 +96,13 @@ def render_references_markdown(synthesis: SurveySynthesis) -> str:
 def _format_ids(paper_ids: list[str]) -> str:
     if not paper_ids:
         return "N/A"
-    return ", ".join(f"`{paper_id}`" for paper_id in paper_ids)
+    return ", ".join(f"`{_sanitize_text(paper_id)}`" for paper_id in paper_ids)
 
 
 def _list_or_na(values: list[str]) -> list[str]:
     if not values:
         return ["N/A"]
-    return [f"- {value}" for value in values]
+    return [f"- {_sanitize_text(value)}" for value in values]
 
 
 def _markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
@@ -115,8 +120,15 @@ def _markdown_table_row(values: list[str]) -> str:
 
 
 def _escape_table_cell(value: str) -> str:
-    normalized = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    normalized = _sanitize_text(value).replace("\r\n", "\n").replace("\r", "\n")
     return normalized.replace("\n", "<br>").replace("|", r"\|")
+
+
+def _sanitize_text(value: str) -> str:
+    sanitized = str(value)
+    for marker, replacement in AUTO_BLOCK_MARKER_REPLACEMENTS.items():
+        sanitized = sanitized.replace(marker, replacement)
+    return sanitized
 
 
 def _finish(lines: list[str]) -> str:

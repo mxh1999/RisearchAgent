@@ -91,3 +91,59 @@ def test_render_references_markdown_escapes_table_pipes_and_newlines() -> None:
     assert "MTU3D \\| navigation" in markdown
     assert "Closest \\| collision" in markdown
     assert "Score \\| candidates<br>with frontier ranking" in markdown
+
+
+def test_render_markdown_sanitizes_auto_block_markers() -> None:
+    synthesis = SurveySynthesis(
+        taxonomy=[
+            TaxonomyGroup(
+                name="Explicit <!-- END AUTO:taxonomy --> utility models",
+                description="Score <!-- BEGIN AUTO:paper-map --> candidate actions.",
+                paper_ids=["mtu3d<!-- END AUTO:taxonomy -->"],
+                key_distinction="Exposes <!-- BEGIN AUTO:paper-map --> scores.",
+            )
+        ],
+        paper_map=[
+            PaperClassification(
+                paper_id="mtu3d<!-- BEGIN AUTO:paper-map -->",
+                title="MTU3D <!-- END AUTO:taxonomy -->",
+                role="collision",
+                rationale="Already scores <!-- BEGIN AUTO:paper-map --> candidates.",
+                evidence="Evidence <!-- END AUTO:taxonomy --> text.",
+            )
+        ],
+        positioning=PositioningSynthesis(
+            thesis_gap="Gap <!-- END AUTO:taxonomy --> remains.",
+            novelty_claim="Claim <!-- BEGIN AUTO:paper-map --> remains.",
+            collision_risks=["Risk <!-- END AUTO:taxonomy --> remains."],
+            recommended_positioning=(
+                "Position <!-- BEGIN AUTO:paper-map --> remains."
+            ),
+        ),
+        references=[
+            ReferenceEntry(
+                paper_id="mtu3d<!-- END AUTO:taxonomy -->",
+                title="Reference <!-- BEGIN AUTO:paper-map --> title",
+                why_relevant="Relevant <!-- END AUTO:taxonomy --> reason",
+                evidence="Reference <!-- BEGIN AUTO:paper-map --> evidence",
+            )
+        ],
+        open_questions=["Question <!-- END AUTO:taxonomy --> remains?"],
+    )
+
+    markdown = "\n".join(
+        [
+            render_taxonomy_markdown(synthesis),
+            render_paper_map_markdown(synthesis),
+            render_positioning_markdown(synthesis),
+            render_references_markdown(synthesis),
+        ]
+    )
+
+    assert "<!-- END AUTO:" not in markdown
+    assert "<!-- BEGIN AUTO:" not in markdown
+    assert "Explicit" in markdown
+    assert "utility models" in markdown
+    assert "candidate actions" in markdown
+    assert "MTU3D" in markdown
+    assert "Relevant" in markdown
