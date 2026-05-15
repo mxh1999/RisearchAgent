@@ -289,9 +289,7 @@ def _parse_topic_relation(raw: Any) -> TopicRelation:
         _required(relation, "relevance", "topic_relation.relevance"),
         "topic_relation.relevance",
     )
-    relation["concept_axes"] = _require_string_list(
-        relation.get("concept_axes", []), "topic_relation.concept_axes"
-    )
+    relation["concept_axes"] = _coerce_axis_list(relation.get("concept_axes", []))
     if "collision_risk" in relation:
         _require_string(
             relation["collision_risk"], "topic_relation.collision_risk"
@@ -368,6 +366,23 @@ def _coerce_text(raw: Any) -> str:
     if isinstance(raw, (Mapping, list)):
         return json.dumps(raw, ensure_ascii=False, sort_keys=True)
     return str(raw)
+
+
+def _coerce_axis_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, Mapping):
+        return [str(key) for key in raw.keys()]
+    items = _require_list(raw, "topic_relation.concept_axes")
+    axes = []
+    for item in items:
+        if isinstance(item, Mapping) and "name" in item:
+            axes.append(str(item["name"]))
+        else:
+            axes.append(_coerce_text(item))
+    return axes
 
 
 def _require_int(raw: Any, path: str) -> int:
