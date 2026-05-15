@@ -84,6 +84,7 @@ async def cmd_survey_synthesize(args) -> None:
     topic_path = Path(args.topic)
     topic = _load_topic(topic_path)
     topic_dir = topic_path.parent
+    _validate_topic_path(topic, topic_dir)
     readings_dir = Path(args.readings_dir) if args.readings_dir else topic_dir / "papers"
 
     from src.survey.reading_loader import load_reading_packages
@@ -167,6 +168,15 @@ def _load_topic(path: Path) -> TopicProfile:
         raise SystemExit(
             f"Error loading topic YAML {path}: malformed TopicProfile: {exc}"
         ) from exc
+
+
+def _validate_topic_path(topic: TopicProfile, topic_dir: Path) -> None:
+    path_topic_id = topic_dir.name
+    if topic.topic_id != path_topic_id:
+        raise SystemExit(
+            "Error loading topic YAML: topic_id does not match topic directory "
+            f"(topic_id={topic.topic_id!r}, directory={path_topic_id!r})."
+        )
 
 
 def run_survey_command(args) -> None:
