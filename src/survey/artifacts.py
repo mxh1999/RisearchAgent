@@ -72,6 +72,13 @@ class TopicArtifactManager:
             "No positioning analysis has been generated yet.\n"
             f"{AUTO_END.format(name='positioning')}\n",
         )
+        self._ensure_file(
+            topic_dir / "sota.md",
+            f"# {profile.name} SOTA\n\n"
+            f"{AUTO_BEGIN.format(name='sota')}\n"
+            "No SOTA records have been generated yet.\n"
+            f"{AUTO_END.format(name='sota')}\n",
+        )
         self._ensure_file(state_dir / "survey_events.jsonl", "")
 
         return TopicArtifactPaths(topic_dir=topic_dir, topic_yaml=topic_yaml)

@@ -349,7 +349,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("pipeline", help="Run full 5-stage pipeline")
-    subparsers.add_parser("sota", help="Show SOTA tracking table")
+    sota_parser = subparsers.add_parser("sota", help="Show or update SOTA tracking")
+    sota_subparsers = sota_parser.add_subparsers(
+        dest="sota_command",
+        help="SOTA command to run",
+    )
+    update_sota_parser = sota_subparsers.add_parser(
+        "update",
+        help="Update topic-scoped SOTA artifacts from staged reading packages",
+    )
+    update_sota_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    update_sota_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+    update_sota_parser.add_argument(
+        "--no-llm-normalize",
+        action="store_true",
+        help="Use conservative exact setting grouping without LLM canonicalization",
+    )
     subparsers.add_parser("stats", help="Show database statistics")
 
     export_parser = subparsers.add_parser("export", help="Export knowledge data to JSON")
@@ -433,6 +455,12 @@ def main():
         from src.survey.cli import run_survey_command
 
         run_survey_command(args)
+        return
+
+    if args.command == "sota" and getattr(args, "sota_command", None) == "update":
+        from src.survey.sota_cli import cmd_sota_update
+
+        asyncio.run(cmd_sota_update(args))
         return
 
     if args.command == "read" and getattr(args, "staged", False):

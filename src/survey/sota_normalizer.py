@@ -42,7 +42,7 @@ async def assign_setting_groups(
             continue
 
         candidates = _top_candidate_groups(groups, raw_setting, limit=5)
-        if use_llm and llm is not None and candidates:
+        if use_llm and llm is not None:
             decision = await _llm_decision(
                 llm=llm,
                 model=model,
