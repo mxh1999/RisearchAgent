@@ -9,7 +9,84 @@ from src.reader.staged_models import PaperReadingPackage
 
 
 @dataclass(frozen=True)
+class RawBenchmarkSetting:
+    benchmark: str
+    setting: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "RawBenchmarkSetting":
+        return cls(
+            benchmark=str(raw["benchmark"]),
+            setting=str(raw["setting"]),
+        )
+
+
+@dataclass(frozen=True)
+class SettingGroup:
+    group_id: str
+    canonical_benchmark: str
+    canonical_setting: str
+    raw_benchmark_settings: list[RawBenchmarkSetting]
+    comparison_axes: dict[str, str]
+    confidence: str
+    rationale: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group_id": self.group_id,
+            "canonical_benchmark": self.canonical_benchmark,
+            "canonical_setting": self.canonical_setting,
+            "raw_benchmark_settings": [
+                raw_setting.to_dict()
+                for raw_setting in self.raw_benchmark_settings
+            ],
+            "comparison_axes": dict(self.comparison_axes),
+            "confidence": self.confidence,
+            "rationale": self.rationale,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "SettingGroup":
+        return cls(
+            group_id=str(raw["group_id"]),
+            canonical_benchmark=str(raw["canonical_benchmark"]),
+            canonical_setting=str(raw["canonical_setting"]),
+            raw_benchmark_settings=[
+                RawBenchmarkSetting.from_dict(item)
+                for item in raw.get("raw_benchmark_settings", [])
+            ],
+            comparison_axes={
+                str(key): str(value)
+                for key, value in raw.get("comparison_axes", {}).items()
+            },
+            confidence=str(raw["confidence"]),
+            rationale=str(raw["rationale"]),
+        )
+
+
+@dataclass(frozen=True)
+class SettingGroupRegistry:
+    groups: list[SettingGroup]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"groups": [group.to_dict() for group in self.groups]}
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "SettingGroupRegistry":
+        return cls(
+            groups=[
+                SettingGroup.from_dict(item)
+                for item in raw.get("groups", [])
+            ]
+        )
+
+
+@dataclass(frozen=True)
 class TopicSOTARecord:
+    record_id: str
     paper_id: str
     title: str
     benchmark: str
@@ -29,6 +106,7 @@ class TopicSOTARecord:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "TopicSOTARecord":
         return cls(
+            record_id=str(raw["record_id"]),
             paper_id=str(raw["paper_id"]),
             title=str(raw["title"]),
             benchmark=str(raw["benchmark"]),
@@ -50,14 +128,25 @@ def collect_sota_records(
     records = []
     for package in packages:
         for experiment in package.experiments:
+            benchmark = _normalize_text(experiment.benchmark)
+            setting = _normalize_text(experiment.setting, default="N/A")
+            metric = _normalize_text(experiment.metric)
+            method = _normalize_text(experiment.method)
             records.append(
                 TopicSOTARecord(
+                    record_id=_make_record_id(
+                        package.paper_id,
+                        benchmark,
+                        setting,
+                        metric,
+                        method,
+                    ),
                     paper_id=package.paper_id,
                     title=package.title,
-                    benchmark=_normalize_text(experiment.benchmark),
-                    setting=_normalize_text(experiment.setting, default="N/A"),
-                    metric=_normalize_text(experiment.metric),
-                    method=_normalize_text(experiment.method),
+                    benchmark=benchmark,
+                    setting=setting,
+                    metric=metric,
+                    method=method,
                     value=experiment.value,
                     higher_is_better=experiment.higher_is_better,
                     source_page=experiment.source.page,
@@ -93,6 +182,19 @@ def records_from_jsonl(text: str) -> list[TopicSOTARecord]:
     return records
 
 
+def setting_registry_to_json(registry: SettingGroupRegistry) -> str:
+    return json.dumps(registry.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def setting_registry_from_json(text: str) -> SettingGroupRegistry:
+    if not text.strip():
+        return SettingGroupRegistry(groups=[])
+    raw = json.loads(text)
+    if not isinstance(raw, dict):
+        raise ValueError("Setting group registry must be a JSON object")
+    return SettingGroupRegistry.from_dict(raw)
+
+
 def _record_sort_key(record: TopicSOTARecord) -> tuple[Any, ...]:
     value_key = -record.value if record.higher_is_better else record.value
     return (
@@ -103,6 +205,16 @@ def _record_sort_key(record: TopicSOTARecord) -> tuple[Any, ...]:
         record.method.lower(),
         record.paper_id.lower(),
     )
+
+
+def _make_record_id(
+    paper_id: str,
+    benchmark: str,
+    setting: str,
+    metric: str,
+    method: str,
+) -> str:
+    return "::".join([paper_id, benchmark, setting, metric, method])
 
 
 def _normalize_text(raw: str, default: str = "") -> str:

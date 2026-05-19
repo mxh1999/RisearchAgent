@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from src.reader.staged_models import Evidence, ExperimentRecord, PaperReadingPackage
 from src.survey.sota_models import (
+    RawBenchmarkSetting,
+    SettingGroup,
+    SettingGroupRegistry,
     TopicSOTARecord,
     collect_sota_records,
     records_from_jsonl,
     records_to_jsonl,
+    setting_registry_from_json,
+    setting_registry_to_json,
     sort_sota_records,
 )
 
@@ -71,6 +76,7 @@ def test_collect_sota_records_normalizes_text_fields() -> None:
 
     assert records == [
         TopicSOTARecord(
+            record_id="paper-1::GOAT-Bench::N/A::SPL::SampleNav",
             paper_id="paper-1",
             title="Paper One",
             benchmark="GOAT-Bench",
@@ -90,6 +96,7 @@ def test_collect_sota_records_normalizes_text_fields() -> None:
 def test_sort_sota_records_respects_metric_direction() -> None:
     high_better = [
         TopicSOTARecord(
+            record_id="b::GOAT-Bench::val::SPL::Beta",
             paper_id="b",
             title="B",
             benchmark="GOAT-Bench",
@@ -104,6 +111,7 @@ def test_sort_sota_records_respects_metric_direction() -> None:
             source_confidence="medium",
         ),
         TopicSOTARecord(
+            record_id="a::GOAT-Bench::val::SPL::Alpha",
             paper_id="a",
             title="A",
             benchmark="GOAT-Bench",
@@ -120,6 +128,7 @@ def test_sort_sota_records_respects_metric_direction() -> None:
     ]
     low_better = [
         TopicSOTARecord(
+            record_id="d::GOAT-Bench::val::Error::Delta",
             paper_id="d",
             title="D",
             benchmark="GOAT-Bench",
@@ -134,6 +143,7 @@ def test_sort_sota_records_respects_metric_direction() -> None:
             source_confidence="medium",
         ),
         TopicSOTARecord(
+            record_id="c::GOAT-Bench::val::Error::Gamma",
             paper_id="c",
             title="C",
             benchmark="GOAT-Bench",
@@ -174,3 +184,32 @@ def test_records_jsonl_round_trip_preserves_evidence() -> None:
 
     assert restored == records
     assert restored[0].source_quote == "SampleNav obtains 35.1 SPL."
+
+
+def test_setting_registry_json_round_trip() -> None:
+    registry = SettingGroupRegistry(
+        groups=[
+            SettingGroup(
+                group_id="goat_bench_val_unseen_standard",
+                canonical_benchmark="GOAT-Bench",
+                canonical_setting="val unseen, standard RGB-D protocol",
+                raw_benchmark_settings=[
+                    RawBenchmarkSetting(
+                        benchmark="GOAT-Bench",
+                        setting="val unseen",
+                    )
+                ],
+                comparison_axes={
+                    "split": "val unseen",
+                    "sensor": "RGB-D",
+                    "protocol": "standard",
+                },
+                confidence="high",
+                rationale="Same benchmark split and protocol.",
+            )
+        ]
+    )
+
+    restored = setting_registry_from_json(setting_registry_to_json(registry))
+
+    assert restored == registry
