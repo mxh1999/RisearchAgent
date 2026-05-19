@@ -125,6 +125,10 @@ def test_sota_update_writes_artifacts_and_preserves_topic_yaml(
     assert "SampleNav" in sota_md
     assert "paper-1::GOAT-Bench::val unseen::SPL::SampleNav" in records_jsonl
     assert "goat_bench_val_unseen" in groups_json
+    assert not (topic_dir / "survey.md").exists()
+    assert not (topic_dir / "papers.md").exists()
+    assert not (topic_dir / "positioning.md").exists()
+    assert not (topic_dir / "references.md").exists()
 
 
 def test_sota_update_rejects_topic_id_mismatch_before_writes(tmp_path: Path) -> None:
@@ -279,3 +283,53 @@ def test_topic_artifact_ensure_does_not_create_sota_by_default(tmp_path: Path) -
     )
 
     assert not (tmp_path / "utility_nav" / "sota.md").exists()
+
+
+def test_sota_update_cached_settings_do_not_require_api_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    _write_package(topic_dir)
+    state_dir = topic_dir / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "sota_setting_groups.json").write_text(
+        json.dumps(
+            {
+                "groups": [
+                    {
+                        "group_id": "goat_bench_val_unseen",
+                        "canonical_benchmark": "GOAT-Bench",
+                        "canonical_setting": "val unseen",
+                        "raw_benchmark_settings": [
+                            {"benchmark": "GOAT-Bench", "setting": "val unseen"}
+                        ],
+                        "comparison_axes": {"split": "val unseen"},
+                        "confidence": "high",
+                        "rationale": "Cached setting group.",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("src.survey.sota_cli.load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        "src.survey.sota_cli.load_config",
+        lambda path: pytest.fail("load_config should not be called for cached settings"),
+    )
+
+    asyncio.run(
+        cmd_sota_update(
+            SimpleNamespace(
+                topic=str(topic_path),
+                readings_dir=None,
+                no_llm_normalize=False,
+                config="config.yaml",
+            )
+        )
+    )
+
+    assert "SampleNav" in (topic_dir / "sota.md").read_text(encoding="utf-8")

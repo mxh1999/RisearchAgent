@@ -76,12 +76,12 @@ class SettingGroupRegistry:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "SettingGroupRegistry":
-        return cls(
-            groups=[
-                SettingGroup.from_dict(item)
-                for item in raw.get("groups", [])
-            ]
-        )
+        groups = [
+            SettingGroup.from_dict(item)
+            for item in raw.get("groups", [])
+        ]
+        _validate_registry(groups)
+        return cls(groups=groups)
 
 
 @dataclass(frozen=True)
@@ -193,6 +193,22 @@ def setting_registry_from_json(text: str) -> SettingGroupRegistry:
     if not isinstance(raw, dict):
         raise ValueError("Setting group registry must be a JSON object")
     return SettingGroupRegistry.from_dict(raw)
+
+
+def _validate_registry(groups: list[SettingGroup]) -> None:
+    seen_group_ids: set[str] = set()
+    seen_raw_settings: set[RawBenchmarkSetting] = set()
+    for group in groups:
+        if group.group_id in seen_group_ids:
+            raise ValueError(f"Duplicate setting group id: {group.group_id}")
+        seen_group_ids.add(group.group_id)
+        for raw_setting in group.raw_benchmark_settings:
+            if raw_setting in seen_raw_settings:
+                raise ValueError(
+                    "Duplicate raw benchmark setting in SOTA registry: "
+                    f"{raw_setting.benchmark} / {raw_setting.setting}"
+                )
+            seen_raw_settings.add(raw_setting)
 
 
 def _record_sort_key(record: TopicSOTARecord) -> tuple[Any, ...]:

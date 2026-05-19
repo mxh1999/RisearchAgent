@@ -78,6 +78,14 @@ def _group(
     )
 
 
+def _other_group() -> SettingGroup:
+    return _group(
+        group_id="unrelated_group",
+        benchmark="UnrelatedBench",
+        setting="Different protocol",
+    )
+
+
 @pytest.mark.asyncio
 async def test_exact_match_reuses_group_without_llm() -> None:
     llm = FakeLLM(response={"action": "create_new"})
@@ -195,6 +203,81 @@ async def test_unknown_llm_group_id_is_rejected() -> None:
         await assign_setting_groups(
             [_record(setting="GOAT validation unseen split")],
             SettingGroupRegistry(groups=[_group()]),
+            _topic(),
+            llm=llm,
+            model="test-model",
+            use_llm=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_candidate_llm_group_id_is_rejected() -> None:
+    llm = FakeLLM(
+        response={
+            "action": "merge_existing",
+            "group_id": "unrelated_group",
+            "canonical_benchmark": "UnrelatedBench",
+            "canonical_setting": "Different protocol",
+            "comparison_axes": {},
+            "confidence": "high",
+            "rationale": "Equivalent.",
+        }
+    )
+
+    with pytest.raises(ValueError, match="candidate group_id"):
+        await assign_setting_groups(
+            [_record(setting="GOAT validation unseen split")],
+            SettingGroupRegistry(groups=[_group(), _other_group()]),
+            _topic(),
+            llm=llm,
+            model="test-model",
+            use_llm=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_medium_confidence_merge_uses_unique_group_id() -> None:
+    llm = FakeLLM(
+        response={
+            "action": "merge_existing",
+            "group_id": "goat_bench_val_unseen",
+            "canonical_benchmark": "GOAT-Bench",
+            "canonical_setting": "val unseen",
+            "comparison_axes": {"split": "val unseen"},
+            "confidence": "medium",
+            "rationale": "Possibly equivalent, but not certain.",
+        }
+    )
+
+    updated = await assign_setting_groups(
+        [_record(setting="GOAT validation unseen split")],
+        SettingGroupRegistry(groups=[_group()]),
+        _topic(),
+        llm=llm,
+        model="test-model",
+        use_llm=True,
+    )
+
+    group_ids = [group.group_id for group in updated.groups]
+    assert len(group_ids) == len(set(group_ids))
+    assert updated.groups[1].group_id != "goat_bench_val_unseen"
+
+
+@pytest.mark.asyncio
+async def test_create_new_requires_canonical_fields() -> None:
+    llm = FakeLLM(
+        response={
+            "action": "create_new",
+            "comparison_axes": {},
+            "confidence": "high",
+            "rationale": "New setting.",
+        }
+    )
+
+    with pytest.raises(ValueError, match="canonical_benchmark"):
+        await assign_setting_groups(
+            [_record(setting="GOAT validation unseen split")],
+            SettingGroupRegistry(groups=[]),
             _topic(),
             llm=llm,
             model="test-model",

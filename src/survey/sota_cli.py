@@ -19,6 +19,7 @@ from src.survey.sota_models import (
     setting_registry_to_json,
 )
 from src.survey.sota_normalizer import assign_setting_groups
+from src.survey.sota_normalizer import has_unmatched_raw_settings
 from src.survey.sota_renderer import render_sota_markdown
 
 
@@ -44,7 +45,8 @@ async def cmd_sota_update(args) -> None:
     use_llm = not getattr(args, "no_llm_normalize", False)
     llm = None
     model = None
-    if use_llm:
+    needs_llm = use_llm and has_unmatched_raw_settings(records, registry)
+    if needs_llm:
         llm, model = _build_llm(args.config)
 
     registry = await assign_setting_groups(
@@ -57,7 +59,7 @@ async def cmd_sota_update(args) -> None:
     )
 
     manager = TopicArtifactManager(topic_dir.parent)
-    manager.ensure_topic_artifacts(topic)
+    (topic_dir / "state").mkdir(parents=True, exist_ok=True)
     manager.ensure_sota_artifact(topic)
     records_path = topic_dir / "state" / "sota_records.jsonl"
     records_path.write_text(records_to_jsonl(records), encoding="utf-8")

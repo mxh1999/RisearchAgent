@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.reader.staged_models import Evidence, ExperimentRecord, PaperReadingPackage
 from src.survey.sota_models import (
     RawBenchmarkSetting,
@@ -213,3 +215,63 @@ def test_setting_registry_json_round_trip() -> None:
     restored = setting_registry_from_json(setting_registry_to_json(registry))
 
     assert restored == registry
+
+
+def test_setting_registry_rejects_duplicate_group_ids() -> None:
+    text = """
+    {
+      "groups": [
+        {
+          "group_id": "duplicate",
+          "canonical_benchmark": "A",
+          "canonical_setting": "x",
+          "raw_benchmark_settings": [{"benchmark": "A", "setting": "x"}],
+          "comparison_axes": {},
+          "confidence": "high",
+          "rationale": "first"
+        },
+        {
+          "group_id": "duplicate",
+          "canonical_benchmark": "B",
+          "canonical_setting": "y",
+          "raw_benchmark_settings": [{"benchmark": "B", "setting": "y"}],
+          "comparison_axes": {},
+          "confidence": "high",
+          "rationale": "second"
+        }
+      ]
+    }
+    """
+
+    with pytest.raises(ValueError, match="Duplicate setting group id"):
+        setting_registry_from_json(text)
+
+
+def test_setting_registry_rejects_duplicate_raw_settings() -> None:
+    text = """
+    {
+      "groups": [
+        {
+          "group_id": "a",
+          "canonical_benchmark": "A",
+          "canonical_setting": "x",
+          "raw_benchmark_settings": [{"benchmark": "A", "setting": "x"}],
+          "comparison_axes": {},
+          "confidence": "high",
+          "rationale": "first"
+        },
+        {
+          "group_id": "b",
+          "canonical_benchmark": "B",
+          "canonical_setting": "y",
+          "raw_benchmark_settings": [{"benchmark": "A", "setting": "x"}],
+          "comparison_axes": {},
+          "confidence": "high",
+          "rationale": "second"
+        }
+      ]
+    }
+    """
+
+    with pytest.raises(ValueError, match="Duplicate raw benchmark setting"):
+        setting_registry_from_json(text)

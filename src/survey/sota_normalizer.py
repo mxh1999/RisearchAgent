@@ -51,7 +51,7 @@ async def assign_setting_groups(
                 sample_records=setting_records[:3],
                 candidates=candidates,
             )
-            group = _apply_decision(decision, raw_setting, groups)
+            group = _apply_decision(decision, raw_setting, groups, candidates)
             if group is not None:
                 groups = group
                 continue
@@ -88,6 +88,16 @@ def _find_exact_group(
         if raw_setting in group.raw_benchmark_settings:
             return index
     return None
+
+
+def has_unmatched_raw_settings(
+    records: list[TopicSOTARecord],
+    registry: SettingGroupRegistry,
+) -> bool:
+    for raw_setting in _unique_raw_settings(records):
+        if _find_exact_group(registry.groups, raw_setting) is None:
+            return True
+    return False
 
 
 def _top_candidate_groups(
@@ -139,14 +149,20 @@ def _apply_decision(
     decision: dict[str, Any],
     raw_setting: RawBenchmarkSetting,
     groups: list[SettingGroup],
+    candidates: list[SettingGroup],
 ) -> Optional[list[SettingGroup]]:
     action = _require_choice(decision, "action", ALLOWED_ACTIONS)
     confidence = _require_choice(decision, "confidence", ALLOWED_CONFIDENCE)
     group_ids = {group.group_id for group in groups}
+    candidate_ids = {group.group_id for group in candidates}
     if action == "merge_existing":
         group_id = _require_string(decision, "group_id")
         if group_id not in group_ids:
             raise ValueError(f"Setting normalization returned unknown group_id: {group_id}")
+        if group_id not in candidate_ids:
+            raise ValueError(
+                f"Setting normalization returned non-candidate group_id: {group_id}"
+            )
         if confidence != "high":
             groups.append(
                 _new_group(
@@ -160,6 +176,7 @@ def _apply_decision(
                         decision, "canonical_setting"
                     ),
                     comparison_axes=_require_axes(decision),
+                    existing_group_ids=group_ids,
                 )
             )
             return groups
@@ -176,13 +193,10 @@ def _apply_decision(
             raw_setting,
             confidence=confidence,
             rationale=_require_string(decision, "rationale"),
-            canonical_benchmark=_optional_string(
-                decision, "canonical_benchmark", raw_setting.benchmark
-            ),
-            canonical_setting=_optional_string(
-                decision, "canonical_setting", raw_setting.setting
-            ),
+            canonical_benchmark=_require_string(decision, "canonical_benchmark"),
+            canonical_setting=_require_string(decision, "canonical_setting"),
             comparison_axes=_require_axes(decision),
+            existing_group_ids=group_ids,
         )
     )
     return groups
@@ -224,11 +238,13 @@ def _new_group(
     canonical_benchmark: Optional[str] = None,
     canonical_setting: Optional[str] = None,
     comparison_axes: Optional[dict[str, str]] = None,
+    existing_group_ids: Optional[set[str]] = None,
 ) -> SettingGroup:
     benchmark = canonical_benchmark or raw_setting.benchmark
     setting = canonical_setting or raw_setting.setting
+    group_id = _unique_group_id(_make_group_id(benchmark, setting), existing_group_ids or set())
     return SettingGroup(
-        group_id=_make_group_id(benchmark, setting),
+        group_id=group_id,
         canonical_benchmark=benchmark,
         canonical_setting=setting,
         raw_benchmark_settings=[raw_setting],
@@ -292,6 +308,15 @@ def _make_group_id(benchmark: str, setting: str) -> str:
     return text or "unknown_setting"
 
 
+def _unique_group_id(base_group_id: str, existing_group_ids: set[str]) -> str:
+    if base_group_id not in existing_group_ids:
+        return base_group_id
+    suffix = 2
+    while f"{base_group_id}_{suffix}" in existing_group_ids:
+        suffix += 1
+    return f"{base_group_id}_{suffix}"
+
+
 def _tokens(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
@@ -309,15 +334,6 @@ def _require_choice(
 
 def _require_string(raw: dict[str, Any], key: str) -> str:
     value = raw.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Setting normalization {key} must be a non-empty string")
-    return value.strip()
-
-
-def _optional_string(raw: dict[str, Any], key: str, default: str) -> str:
-    value = raw.get(key)
-    if value is None:
-        return default
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"Setting normalization {key} must be a non-empty string")
     return value.strip()
