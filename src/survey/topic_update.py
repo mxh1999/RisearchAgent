@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from src.reader.staged_models import PaperReadingPackage
+from src.survey.cli import _load_topic, _validate_topic_path, synthesize_survey_artifacts
 from src.survey.models import TopicProfile
+from src.survey.reading_loader import load_reading_packages
+from src.survey.sota_cli import _load_registry, update_sota_artifacts
+from src.survey.synthesizer import SurveySynthesizer
 
 
 @dataclass
@@ -99,3 +103,80 @@ def write_topic_update_report(topic_dir: Path, report: TopicUpdateReport) -> Pat
         encoding="utf-8",
     )
     return report_path
+
+
+async def update_topic_artifacts(
+    topic_path: Path,
+    readings_dir: Path | None,
+    survey_llm,
+    survey_model: str | None,
+    sota_llm,
+    sota_model: str | None,
+    skip_survey: bool,
+    skip_sota: bool,
+    use_sota_llm: bool,
+) -> TopicUpdateReport:
+    validate_topic_update_options(skip_survey=skip_survey, skip_sota=skip_sota)
+    topic = _load_topic(topic_path)
+    topic_dir = topic_path.parent
+    _validate_topic_path(topic, topic_dir)
+    source_dir = readings_dir if readings_dir is not None else topic_dir / "papers"
+
+    try:
+        packages = load_reading_packages(source_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(f"Error loading reading packages: {exc}") from exc
+
+    report = build_preflight_report(topic, source_dir, packages)
+
+    if skip_survey:
+        report.survey = TopicUpdateStepReport(status="skipped")
+    else:
+        if survey_llm is None:
+            raise ValueError("survey_llm is required when survey update is enabled")
+        try:
+            synthesis = await SurveySynthesizer(
+                survey_llm, model=survey_model
+            ).synthesize(topic, packages)
+        except ValueError as exc:
+            raise SystemExit(f"Error synthesizing survey: {exc}") from exc
+        survey_paths = await synthesize_survey_artifacts(
+            topic=topic,
+            topic_dir=topic_dir,
+            packages=packages,
+            synthesis=synthesis,
+        )
+        report.survey = TopicUpdateStepReport(
+            status="updated",
+            artifacts=[str(path.relative_to(topic_dir)) for path in survey_paths.values()],
+        )
+
+    if skip_sota:
+        report.sota = TopicUpdateStepReport(status="skipped")
+    else:
+        registry = _load_registry(topic_dir / "state" / "sota_setting_groups.json")
+        try:
+            sota_result = await update_sota_artifacts(
+                topic=topic,
+                topic_dir=topic_dir,
+                packages=packages,
+                registry=registry,
+                llm=sota_llm,
+                model=sota_model,
+                use_llm=use_sota_llm,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        report.sota = TopicUpdateStepReport(
+            status="updated",
+            artifacts=[
+                str(sota_result["sota"].relative_to(topic_dir)),
+                str(sota_result["records"].relative_to(topic_dir)),
+                str(sota_result["setting_groups"].relative_to(topic_dir)),
+            ],
+            record_count=int(sota_result["record_count"]),
+            setting_group_count=int(sota_result["setting_group_count"]),
+        )
+
+    write_topic_update_report(topic_dir, report)
+    return report
