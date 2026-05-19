@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import textwrap
+import types
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,8 +13,10 @@ from run import build_parser
 from src.reader.staged_models import Evidence, ExperimentRecord, PaperReadingPackage
 from src.survey.models import TopicProfile
 from src.survey.topic_update import (
+    LoadedTopicUpdateContext,
     TopicUpdateStepReport,
     build_preflight_report,
+    load_topic_update_context,
     update_topic_artifacts,
     validate_topic_update_options,
     write_topic_update_report,
@@ -194,11 +197,32 @@ def test_write_topic_update_report_json(tmp_path: Path) -> None:
     assert raw["topic_id"] == "utility_nav"
     assert raw["survey"]["status"] == "updated"
     assert raw["survey"]["artifacts"] == ["survey.md"]
+    assert "record_count" not in raw["survey"]
+    assert "setting_group_count" not in raw["survey"]
 
 
 def test_validate_topic_update_options_rejects_both_skips() -> None:
     with pytest.raises(ValueError, match="cannot skip both"):
         validate_topic_update_options(skip_survey=True, skip_sota=True)
+
+
+def test_load_topic_update_context_reads_topic_packages_and_registry_once(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    _write_package(topic_dir, _package("mtu3d", has_experiments=True))
+
+    context = load_topic_update_context(
+        topic_path=topic_path,
+        readings_dir=None,
+    )
+
+    assert isinstance(context, LoadedTopicUpdateContext)
+    assert context.topic.topic_id == "utility_nav"
+    assert [package.paper_id for package in context.packages] == ["mtu3d"]
+    assert len(context.sota_records) == 1
+    assert context.sota_needs_llm is True
 
 
 def test_topic_update_parser_accepts_options() -> None:
@@ -239,6 +263,42 @@ def test_topic_update_parser_rejects_both_skips() -> None:
     assert exc_info.value.code == 2
 
 
+def test_topic_update_cli_reports_bad_registry_before_api_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from src.survey.topic_cli import cmd_topic_update
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    _write_package(topic_dir, _package("mtu3d", has_experiments=True))
+    state_dir = topic_dir / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "sota_setting_groups.json").write_text("{bad json", encoding="utf-8")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("src.survey.topic_cli.load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        "src.survey.topic_cli.load_config",
+        lambda path: pytest.fail("load_config should not run before local validation"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(
+            cmd_topic_update(
+                types.SimpleNamespace(
+                    config="config.yaml",
+                    topic=str(topic_path),
+                    readings_dir=None,
+                    skip_survey=False,
+                    skip_sota=False,
+                    no_llm_normalize=False,
+                )
+            )
+        )
+
+    assert "SOTA setting groups" in str(exc_info.value)
+
+
 def test_update_topic_artifacts_runs_survey_and_sota(tmp_path: Path) -> None:
     topic_dir = tmp_path / "utility_nav"
     topic_path = _write_topic(topic_dir)
@@ -258,8 +318,7 @@ def test_update_topic_artifacts_runs_survey_and_sota(tmp_path: Path) -> None:
 
     report = asyncio.run(
         update_topic_artifacts(
-            topic_path=topic_path,
-            readings_dir=None,
+            context=load_topic_update_context(topic_path, None),
             survey_llm=FakeSurveyLLM(),
             survey_model="survey-model",
             sota_llm=FakeSOTALLM(),
@@ -302,8 +361,7 @@ def test_update_topic_artifacts_skip_survey_does_not_create_survey_files(
 
     report = asyncio.run(
         update_topic_artifacts(
-            topic_path=topic_path,
-            readings_dir=None,
+            context=load_topic_update_context(topic_path, None),
             survey_llm=None,
             survey_model=None,
             sota_llm=None,
@@ -330,8 +388,7 @@ def test_update_topic_artifacts_skip_sota_does_not_create_sota_files(
 
     report = asyncio.run(
         update_topic_artifacts(
-            topic_path=topic_path,
-            readings_dir=None,
+            context=load_topic_update_context(topic_path, None),
             survey_llm=FakeSurveyLLM(),
             survey_model="survey-model",
             sota_llm=None,

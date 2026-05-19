@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +10,12 @@ from src.survey.cli import _load_topic, _validate_topic_path, synthesize_survey_
 from src.survey.models import TopicProfile
 from src.survey.reading_loader import load_reading_packages
 from src.survey.sota_cli import _load_registry, update_sota_artifacts
+from src.survey.sota_models import (
+    SettingGroupRegistry,
+    TopicSOTARecord,
+    collect_sota_records,
+)
+from src.survey.sota_normalizer import has_unmatched_raw_settings
 from src.survey.synthesizer import SurveySynthesizer
 
 
@@ -22,7 +28,16 @@ class TopicUpdateStepReport:
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        raw = {"status": self.status}
+        if self.artifacts:
+            raw["artifacts"] = list(self.artifacts)
+        if self.record_count:
+            raw["record_count"] = self.record_count
+        if self.setting_group_count:
+            raw["setting_group_count"] = self.setting_group_count
+        if self.error:
+            raw["error"] = self.error
+        return raw
 
 
 @dataclass
@@ -55,6 +70,18 @@ class TopicUpdateReport:
             "sota": self.sota.to_dict(),
             "warnings": list(self.warnings),
         }
+
+
+@dataclass(frozen=True)
+class LoadedTopicUpdateContext:
+    topic_path: Path
+    topic_dir: Path
+    readings_dir: Path
+    topic: TopicProfile
+    packages: list[PaperReadingPackage]
+    setting_registry: SettingGroupRegistry
+    sota_records: list[TopicSOTARecord]
+    sota_needs_llm: bool
 
 
 def validate_topic_update_options(skip_survey: bool, skip_sota: bool) -> None:
@@ -94,6 +121,32 @@ def build_preflight_report(
     )
 
 
+def load_topic_update_context(
+    topic_path: Path,
+    readings_dir: Path | None,
+) -> LoadedTopicUpdateContext:
+    topic = _load_topic(topic_path)
+    topic_dir = topic_path.parent
+    _validate_topic_path(topic, topic_dir)
+    source_dir = readings_dir if readings_dir is not None else topic_dir / "papers"
+    try:
+        packages = load_reading_packages(source_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(f"Error loading reading packages: {exc}") from exc
+    registry = _load_registry(topic_dir / "state" / "sota_setting_groups.json")
+    records = collect_sota_records(packages)
+    return LoadedTopicUpdateContext(
+        topic_path=topic_path,
+        topic_dir=topic_dir,
+        readings_dir=source_dir,
+        topic=topic,
+        packages=packages,
+        setting_registry=registry,
+        sota_records=records,
+        sota_needs_llm=has_unmatched_raw_settings(records, registry),
+    )
+
+
 def write_topic_update_report(topic_dir: Path, report: TopicUpdateReport) -> Path:
     report_path = topic_dir / "state" / "topic_update_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,8 +159,7 @@ def write_topic_update_report(topic_dir: Path, report: TopicUpdateReport) -> Pat
 
 
 async def update_topic_artifacts(
-    topic_path: Path,
-    readings_dir: Path | None,
+    context: LoadedTopicUpdateContext,
     survey_llm,
     survey_model: str | None,
     sota_llm,
@@ -117,17 +169,10 @@ async def update_topic_artifacts(
     use_sota_llm: bool,
 ) -> TopicUpdateReport:
     validate_topic_update_options(skip_survey=skip_survey, skip_sota=skip_sota)
-    topic = _load_topic(topic_path)
-    topic_dir = topic_path.parent
-    _validate_topic_path(topic, topic_dir)
-    source_dir = readings_dir if readings_dir is not None else topic_dir / "papers"
-
-    try:
-        packages = load_reading_packages(source_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        raise SystemExit(f"Error loading reading packages: {exc}") from exc
-
-    report = build_preflight_report(topic, source_dir, packages)
+    topic = context.topic
+    topic_dir = context.topic_dir
+    packages = context.packages
+    report = build_preflight_report(topic, context.readings_dir, packages)
 
     if skip_survey:
         report.survey = TopicUpdateStepReport(status="skipped")
@@ -154,13 +199,12 @@ async def update_topic_artifacts(
     if skip_sota:
         report.sota = TopicUpdateStepReport(status="skipped")
     else:
-        registry = _load_registry(topic_dir / "state" / "sota_setting_groups.json")
         try:
             sota_result = await update_sota_artifacts(
                 topic=topic,
                 topic_dir=topic_dir,
                 packages=packages,
-                registry=registry,
+                registry=context.setting_registry,
                 llm=sota_llm,
                 model=sota_model,
                 use_llm=use_sota_llm,

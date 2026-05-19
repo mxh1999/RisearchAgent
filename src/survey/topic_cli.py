@@ -8,42 +8,31 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.config import LLMConfig, load_config
-from src.survey.cli import _load_topic, _validate_topic_path
-from src.survey.reading_loader import load_reading_packages
-from src.survey.sota_cli import _load_registry
-from src.survey.sota_models import collect_sota_records
-from src.survey.sota_normalizer import has_unmatched_raw_settings
-from src.survey.topic_update import update_topic_artifacts
+from src.survey.topic_update import load_topic_update_context, update_topic_artifacts
 
 
 async def cmd_topic_update(args) -> None:
     topic_path = Path(args.topic)
-    topic = _load_topic(topic_path)
-    topic_dir = topic_path.parent
-    _validate_topic_path(topic, topic_dir)
-    readings_dir = Path(args.readings_dir) if args.readings_dir else topic_dir / "papers"
-    try:
-        packages = load_reading_packages(readings_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        raise SystemExit(f"Error loading reading packages: {exc}") from exc
+    readings_dir = Path(args.readings_dir) if args.readings_dir else None
+    context = load_topic_update_context(topic_path, readings_dir)
+    topic_dir = context.topic_dir
 
     survey_llm = None
     survey_model = None
-    if not args.skip_survey:
-        survey_llm, survey_model = _build_llm(args.config, purpose="topic update")
-
     sota_llm = None
     sota_model = None
     use_sota_llm = not args.no_llm_normalize
-    if not args.skip_sota and use_sota_llm:
-        records = collect_sota_records(packages)
-        registry = _load_registry(topic_dir / "state" / "sota_setting_groups.json")
-        if has_unmatched_raw_settings(records, registry):
-            sota_llm, sota_model = _build_llm(args.config, purpose="SOTA setting normalization")
+    if not args.skip_sota and not context.sota_records:
+        raise SystemExit("No experiment records found in reading packages.")
+
+    if not args.skip_survey:
+        survey_llm, survey_model = _build_llm(args.config, purpose="topic update")
+
+    if not args.skip_sota and use_sota_llm and context.sota_needs_llm:
+        sota_llm, sota_model = _build_llm(args.config, purpose="SOTA setting normalization")
 
     report = await update_topic_artifacts(
-        topic_path=topic_path,
-        readings_dir=readings_dir,
+        context=context,
         survey_llm=survey_llm,
         survey_model=survey_model,
         sota_llm=sota_llm,
