@@ -9,6 +9,7 @@ import yaml
 from dotenv import load_dotenv
 
 from src.config import LLMConfig, load_config
+from src.reader.staged_models import PaperReadingPackage
 from src.survey.artifacts import TopicArtifactManager
 from src.survey.models import SurveyEvent, TopicProfile
 from src.survey.refiner import TopicRefiner
@@ -88,12 +89,6 @@ async def cmd_survey_synthesize(args) -> None:
             ) from exc
         raise
 
-    from src.survey.survey_renderer import (
-        render_paper_map_markdown,
-        render_positioning_markdown,
-        render_references_markdown,
-        render_taxonomy_markdown,
-    )
     from src.survey.synthesizer import SurveySynthesizer
 
     load_dotenv()
@@ -118,21 +113,53 @@ async def cmd_survey_synthesize(args) -> None:
     except ValueError as exc:
         raise SystemExit(f"Error synthesizing survey: {exc}") from exc
 
+    paths = await synthesize_survey_artifacts(
+        topic=topic,
+        topic_dir=topic_dir,
+        packages=packages,
+        synthesis=synthesis,
+    )
+
+    print(f"Survey: {paths['survey']}")
+    print(f"Papers: {paths['papers']}")
+    print(f"Positioning: {paths['positioning']}")
+    print(f"References: {paths['references']}")
+
+
+async def synthesize_survey_artifacts(
+    topic: TopicProfile,
+    topic_dir: Path,
+    packages: list[PaperReadingPackage],
+    synthesis,
+) -> dict[str, Path]:
+    from src.survey.survey_renderer import (
+        render_paper_map_markdown,
+        render_positioning_markdown,
+        render_references_markdown,
+        render_taxonomy_markdown,
+    )
+
     manager = TopicArtifactManager(topic_dir.parent)
     manager.ensure_topic_artifacts(topic)
+    paths = {
+        "survey": topic_dir / "survey.md",
+        "papers": topic_dir / "papers.md",
+        "positioning": topic_dir / "positioning.md",
+        "references": topic_dir / "references.md",
+    }
     manager.update_auto_block(
-        topic_dir / "survey.md", "taxonomy", render_taxonomy_markdown(synthesis)
+        paths["survey"], "taxonomy", render_taxonomy_markdown(synthesis)
     )
     manager.update_auto_block(
-        topic_dir / "papers.md", "paper-map", render_paper_map_markdown(synthesis)
+        paths["papers"], "paper-map", render_paper_map_markdown(synthesis)
     )
     manager.update_auto_block(
-        topic_dir / "positioning.md",
+        paths["positioning"],
         "positioning",
         render_positioning_markdown(synthesis),
     )
     manager.update_auto_block(
-        topic_dir / "references.md",
+        paths["references"],
         "references",
         render_references_markdown(synthesis),
     )
@@ -143,11 +170,7 @@ async def cmd_survey_synthesize(args) -> None:
             message=f"Synthesized survey from {len(packages)} reading packages.",
         ),
     )
-
-    print(f"Survey: {topic_dir / 'survey.md'}")
-    print(f"Papers: {topic_dir / 'papers.md'}")
-    print(f"Positioning: {topic_dir / 'positioning.md'}")
-    print(f"References: {topic_dir / 'references.md'}")
+    return paths
 
 
 def _load_topic(path: Path) -> TopicProfile:

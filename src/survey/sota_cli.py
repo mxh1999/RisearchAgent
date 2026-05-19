@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.config import LLMConfig, load_config
+from src.reader.staged_models import PaperReadingPackage
 from src.survey.artifacts import TopicArtifactManager
 from src.survey.cli import _load_topic, _validate_topic_path
 from src.survey.models import SurveyEvent
@@ -35,19 +36,46 @@ async def cmd_sota_update(args) -> None:
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(f"Error loading reading packages: {exc}") from exc
 
-    records = collect_sota_records(packages)
-    if not records:
-        raise SystemExit("No experiment records found in reading packages.")
-
     groups_path = topic_dir / "state" / "sota_setting_groups.json"
     registry = _load_registry(groups_path)
 
     use_llm = not getattr(args, "no_llm_normalize", False)
     llm = None
     model = None
+    records = collect_sota_records(packages)
+    if not records:
+        raise SystemExit("No experiment records found in reading packages.")
     needs_llm = use_llm and has_unmatched_raw_settings(records, registry)
     if needs_llm:
         llm, model = _build_llm(args.config)
+
+    result = await update_sota_artifacts(
+        topic=topic,
+        topic_dir=topic_dir,
+        packages=packages,
+        registry=registry,
+        llm=llm,
+        model=model,
+        use_llm=use_llm,
+    )
+
+    print(f"SOTA: {result['sota']}")
+    print(f"Records: {result['records']}")
+    print(f"Setting groups: {result['setting_groups']}")
+
+
+async def update_sota_artifacts(
+    topic,
+    topic_dir: Path,
+    packages: list[PaperReadingPackage],
+    registry: SettingGroupRegistry,
+    llm,
+    model: str | None,
+    use_llm: bool,
+) -> dict[str, object]:
+    records = collect_sota_records(packages)
+    if not records:
+        raise ValueError("No experiment records found in reading packages.")
 
     registry = await assign_setting_groups(
         records,
@@ -62,6 +90,7 @@ async def cmd_sota_update(args) -> None:
     (topic_dir / "state").mkdir(parents=True, exist_ok=True)
     manager.ensure_sota_artifact(topic)
     records_path = topic_dir / "state" / "sota_records.jsonl"
+    groups_path = topic_dir / "state" / "sota_setting_groups.json"
     records_path.write_text(records_to_jsonl(records), encoding="utf-8")
     groups_path.write_text(setting_registry_to_json(registry), encoding="utf-8")
     manager.update_auto_block(
@@ -76,10 +105,13 @@ async def cmd_sota_update(args) -> None:
             message=f"Updated SOTA from {len(records)} experiment records.",
         ),
     )
-
-    print(f"SOTA: {topic_dir / 'sota.md'}")
-    print(f"Records: {records_path}")
-    print(f"Setting groups: {groups_path}")
+    return {
+        "sota": topic_dir / "sota.md",
+        "records": records_path,
+        "setting_groups": groups_path,
+        "record_count": len(records),
+        "setting_group_count": len(registry.groups),
+    }
 
 
 def _load_registry(path: Path) -> SettingGroupRegistry:
