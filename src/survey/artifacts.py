@@ -72,16 +72,22 @@ class TopicArtifactManager:
             "No positioning analysis has been generated yet.\n"
             f"{AUTO_END.format(name='positioning')}\n",
         )
+        self._ensure_file(state_dir / "survey_events.jsonl", "")
+
+        return TopicArtifactPaths(topic_dir=topic_dir, topic_yaml=topic_yaml)
+
+    def ensure_sota_artifact(self, profile: TopicProfile) -> Path:
+        self._validate_topic_id(profile.topic_id)
+        topic_dir = self.topics_root / profile.topic_id
+        sota_path = topic_dir / "sota.md"
         self._ensure_file(
-            topic_dir / "sota.md",
+            sota_path,
             f"# {profile.name} SOTA\n\n"
             f"{AUTO_BEGIN.format(name='sota')}\n"
             "No SOTA records have been generated yet.\n"
             f"{AUTO_END.format(name='sota')}\n",
         )
-        self._ensure_file(state_dir / "survey_events.jsonl", "")
-
-        return TopicArtifactPaths(topic_dir=topic_dir, topic_yaml=topic_yaml)
+        return sota_path
 
     def update_auto_block(self, path: Path, block_name: str, content: str) -> None:
         begin = AUTO_BEGIN.format(name=block_name)

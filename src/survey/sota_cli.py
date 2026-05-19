@@ -58,6 +58,7 @@ async def cmd_sota_update(args) -> None:
 
     manager = TopicArtifactManager(topic_dir.parent)
     manager.ensure_topic_artifacts(topic)
+    manager.ensure_sota_artifact(topic)
     records_path = topic_dir / "state" / "sota_records.jsonl"
     records_path.write_text(records_to_jsonl(records), encoding="utf-8")
     groups_path.write_text(setting_registry_to_json(registry), encoding="utf-8")

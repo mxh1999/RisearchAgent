@@ -262,3 +262,20 @@ def test_sota_update_uses_fake_llm_for_canonicalization(tmp_path: Path, monkeypa
     assert "val unseen, standard protocol" in (
         topic_dir / "sota.md"
     ).read_text(encoding="utf-8")
+
+
+def test_topic_artifact_ensure_does_not_create_sota_by_default(tmp_path: Path) -> None:
+    from src.survey.artifacts import TopicArtifactManager
+    from src.survey.models import TopicProfile
+
+    manager = TopicArtifactManager(tmp_path)
+    manager.ensure_topic_artifacts(
+        TopicProfile(
+            topic_id="utility_nav",
+            name="Utility Navigation",
+            description="Task-conditioned utility.",
+            intent="Build survey artifacts.",
+        )
+    )
+
+    assert not (tmp_path / "utility_nav" / "sota.md").exists()
