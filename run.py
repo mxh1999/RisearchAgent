@@ -59,6 +59,13 @@ class PaperReaderArgumentParser(argparse.ArgumentParser):
                     )
                 if not getattr(parsed, "arxiv_id", None):
                     self.error("read requires arxiv_id unless --staged is set")
+        if (
+            getattr(parsed, "command", None) == "topic"
+            and getattr(parsed, "topic_command", None) == "update"
+            and getattr(parsed, "skip_survey", False)
+            and getattr(parsed, "skip_sota", False)
+        ):
+            self.error("topic update cannot use both --skip-survey and --skip-sota")
         return parsed
 
 
@@ -435,6 +442,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory containing staged reading package JSON files",
     )
 
+    topic_parser = subparsers.add_parser("topic", help="Topic-level workflows")
+    topic_subparsers = topic_parser.add_subparsers(
+        dest="topic_command",
+        help="Topic command to run",
+    )
+    topic_subparsers.required = True
+    topic_update_parser = topic_subparsers.add_parser(
+        "update",
+        help="Update survey and SOTA artifacts for one topic",
+    )
+    topic_update_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_update_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+    topic_update_parser.add_argument(
+        "--skip-survey",
+        action="store_true",
+        help="Skip survey synthesis artifacts",
+    )
+    topic_update_parser.add_argument(
+        "--skip-sota",
+        action="store_true",
+        help="Skip SOTA artifact update",
+    )
+    topic_update_parser.add_argument(
+        "--no-llm-normalize",
+        action="store_true",
+        help="Use conservative exact SOTA setting grouping without LLM canonicalization",
+    )
+
     return parser
 
 
@@ -455,6 +497,12 @@ def main():
         from src.survey.cli import run_survey_command
 
         run_survey_command(args)
+        return
+
+    if args.command == "topic":
+        from src.survey.topic_cli import run_topic_command
+
+        run_topic_command(args)
         return
 
     if args.command == "sota" and getattr(args, "sota_command", None) == "update":

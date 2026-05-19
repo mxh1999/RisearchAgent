@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 import pytest
 
+from run import build_parser
 from src.reader.staged_models import Evidence, ExperimentRecord, PaperReadingPackage
 from src.survey.models import TopicProfile
 from src.survey.topic_update import (
@@ -198,6 +199,44 @@ def test_write_topic_update_report_json(tmp_path: Path) -> None:
 def test_validate_topic_update_options_rejects_both_skips() -> None:
     with pytest.raises(ValueError, match="cannot skip both"):
         validate_topic_update_options(skip_survey=True, skip_sota=True)
+
+
+def test_topic_update_parser_accepts_options() -> None:
+    args = build_parser().parse_args(
+        [
+            "topic",
+            "update",
+            "--topic",
+            "data/topics/utility_nav/topic.yaml",
+            "--readings-dir",
+            "data/readings",
+            "--skip-sota",
+            "--no-llm-normalize",
+        ]
+    )
+
+    assert args.command == "topic"
+    assert args.topic_command == "update"
+    assert args.topic == "data/topics/utility_nav/topic.yaml"
+    assert args.readings_dir == "data/readings"
+    assert args.skip_sota is True
+    assert args.no_llm_normalize is True
+
+
+def test_topic_update_parser_rejects_both_skips() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        build_parser().parse_args(
+            [
+                "topic",
+                "update",
+                "--topic",
+                "data/topics/utility_nav/topic.yaml",
+                "--skip-survey",
+                "--skip-sota",
+            ]
+        )
+
+    assert exc_info.value.code == 2
 
 
 def test_update_topic_artifacts_runs_survey_and_sota(tmp_path: Path) -> None:
