@@ -69,6 +69,13 @@ class PaperReaderArgumentParser(argparse.ArgumentParser):
         return parsed
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
+
+
 def create_orchestrator(config):
     from src.pipeline.orchestrator import PipelineOrchestrator
 
@@ -480,6 +487,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-llm-normalize",
         action="store_true",
         help="Use conservative exact SOTA setting grouping without LLM canonicalization",
+    )
+    topic_discover_parser = topic_subparsers.add_parser(
+        "discover",
+        help="Discover candidate papers for one topic from configured search queries",
+    )
+    topic_discover_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_discover_parser.add_argument(
+        "--max-results-per-query",
+        type=_positive_int,
+        default=10,
+        help="Maximum arXiv results to fetch for each topic search query",
+    )
+    topic_discover_parser.add_argument(
+        "--sort",
+        choices=["submitted", "relevance"],
+        default="submitted",
+        help="arXiv result sort order",
+    )
+    topic_discover_parser.add_argument(
+        "--days-lookback",
+        type=_positive_int,
+        default=365,
+        help="Only keep papers published within this many days",
+    )
+    topic_discover_parser.add_argument(
+        "--include-existing",
+        action="store_true",
+        help="Include papers already present in the topic papers directory",
     )
     topic_update_parser = topic_subparsers.add_parser(
         "update",

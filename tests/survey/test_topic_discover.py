@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
+from run import build_parser
 from src.survey.arxiv_provider import convert_arxiv_result
 from src.survey.models import TopicProfile, TopicQuery
 from src.survey.topic_discover import (
@@ -16,6 +19,23 @@ from src.survey.topic_discover import (
     render_discovery_markdown,
     write_discovery_artifacts,
 )
+
+
+class FakeDiscoveryProvider:
+    def __init__(self, papers_by_query: dict[str, list[RawDiscoveryPaper]] | None = None):
+        self.papers_by_query = papers_by_query or {}
+        self.calls: list[tuple[str, str, str, int, str]] = []
+
+    async def search(
+        self,
+        query: str,
+        query_name: str,
+        query_purpose: str,
+        max_results: int,
+        sort: str,
+    ) -> list[RawDiscoveryPaper]:
+        self.calls.append((query, query_name, query_purpose, max_results, sort))
+        return list(self.papers_by_query.get(query_name, []))
 
 
 def _topic() -> TopicProfile:
@@ -57,6 +77,185 @@ def _paper(
         query_name=query_name,
         query_purpose=f"{query_name} purpose",
     )
+
+
+def _write_topic_yaml(topic_dir: Path, topic: TopicProfile | None = None) -> Path:
+    topic = topic or _topic()
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    topic_path = topic_dir / "topic.yaml"
+    topic_path.write_text(
+        yaml.safe_dump(topic.to_dict(), sort_keys=False),
+        encoding="utf-8",
+    )
+    return topic_path
+
+
+def test_topic_discover_parser_accepts_all_options() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "topic",
+            "discover",
+            "--topic",
+            "data/topics/utility_nav/topic.yaml",
+            "--max-results-per-query",
+            "7",
+            "--sort",
+            "relevance",
+            "--days-lookback",
+            "90",
+            "--include-existing",
+        ]
+    )
+
+    assert args.command == "topic"
+    assert args.topic_command == "discover"
+    assert args.topic == "data/topics/utility_nav/topic.yaml"
+    assert args.max_results_per_query == 7
+    assert args.sort == "relevance"
+    assert args.days_lookback == 90
+    assert args.include_existing is True
+
+
+@pytest.mark.parametrize(
+    "option,value",
+    [
+        ("--sort", "updated"),
+        ("--max-results-per-query", "0"),
+        ("--days-lookback", "0"),
+    ],
+)
+def test_topic_discover_parser_rejects_invalid_options(option: str, value: str) -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "topic",
+                "discover",
+                "--topic",
+                "data/topics/utility_nav/topic.yaml",
+                option,
+                value,
+            ]
+        )
+
+
+def test_cmd_topic_discover_writes_artifacts_and_calls_provider(
+    tmp_path: Path,
+) -> None:
+    from src.survey.discover_cli import cmd_topic_discover
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic_yaml(topic_dir)
+    provider = FakeDiscoveryProvider(
+        {
+            "direct": [
+                _paper(
+                    "2605.00001",
+                    "Fresh Direct Paper",
+                    "direct",
+                    published="2026-05-20T00:00:00+00:00",
+                ),
+                _paper(
+                    "2301.00001",
+                    "Stale Direct Paper",
+                    "direct",
+                    published="2023-01-01T00:00:00+00:00",
+                ),
+            ],
+            "benchmark": [
+                _paper(
+                    "2605.00002",
+                    "Fresh Benchmark Paper",
+                    "benchmark",
+                    published="2026-05-19T00:00:00+00:00",
+                )
+            ],
+        }
+    )
+    args = SimpleNamespace(
+        topic=str(topic_path),
+        max_results_per_query=5,
+        sort="submitted",
+        days_lookback=30,
+        include_existing=False,
+    )
+
+    report = asyncio.run(cmd_topic_discover(args, provider=provider))
+
+    assert provider.calls == [
+        ('"utility" "navigation"', "direct", "Direct topic query.", 5, "submitted"),
+        ('"GOAT-Bench" navigation', "benchmark", "Benchmark query.", 5, "submitted"),
+    ]
+    assert report.candidate_count == 2
+    assert [candidate.paper_id for candidate in report.candidates] == [
+        "2605.00001",
+        "2605.00002",
+    ]
+    assert (topic_dir / "state" / "discovery_candidates.json").exists()
+    assert (topic_dir / "discovery.md").exists()
+    assert (topic_dir / "ingest_manifest.draft.yaml").exists()
+    raw_report = json.loads(
+        (topic_dir / "state" / "discovery_candidates.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert raw_report["candidate_count"] == 2
+
+
+def test_cmd_topic_discover_rejects_empty_search_queries_before_provider(
+    tmp_path: Path,
+) -> None:
+    from src.survey.discover_cli import cmd_topic_discover
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic_yaml(
+        topic_dir,
+        TopicProfile(
+            topic_id="utility_nav",
+            name="Utility Navigation",
+            description="Task-conditioned utility over 3D memory.",
+            intent="Find candidate papers.",
+            search_queries=[],
+        ),
+    )
+    provider = FakeDiscoveryProvider()
+    args = SimpleNamespace(
+        topic=str(topic_path),
+        max_results_per_query=5,
+        sort="submitted",
+        days_lookback=30,
+        include_existing=False,
+    )
+
+    with pytest.raises(SystemExit, match="search_queries"):
+        asyncio.run(cmd_topic_discover(args, provider=provider))
+
+    assert provider.calls == []
+
+
+def test_cmd_topic_discover_rejects_topic_id_mismatch_before_provider(
+    tmp_path: Path,
+) -> None:
+    from src.survey.discover_cli import cmd_topic_discover
+
+    topic_dir = tmp_path / "wrong_dir"
+    topic_path = _write_topic_yaml(topic_dir)
+    provider = FakeDiscoveryProvider()
+    args = SimpleNamespace(
+        topic=str(topic_path),
+        max_results_per_query=5,
+        sort="submitted",
+        days_lookback=30,
+        include_existing=False,
+    )
+
+    with pytest.raises(SystemExit, match="topic_id does not match"):
+        asyncio.run(cmd_topic_discover(args, provider=provider))
+
+    assert provider.calls == []
 
 
 def test_convert_arxiv_result_to_raw_discovery_paper() -> None:

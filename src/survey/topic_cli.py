@@ -79,6 +79,11 @@ def _build_llm(config_path: str, purpose: str):
 
 
 def run_topic_command(args) -> None:
+    if args.topic_command == "discover":
+        from src.survey.discover_cli import run_topic_discover
+
+        run_topic_discover(args)
+        return
     if args.topic_command == "ingest":
         from src.survey.ingest_cli import run_topic_ingest
 
