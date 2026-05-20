@@ -4,9 +4,11 @@ import asyncio
 import json
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from run import build_parser
 from src.reader.staged_models import PaperReadingPackage
 from src.survey.topic_ingest import (
     IngestUpdateReport,
@@ -299,6 +301,105 @@ def test_load_ingest_manifest_rejects_boolean_year(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="year"):
         load_ingest_manifest(manifest_path)
+
+
+def test_topic_ingest_parser_accepts_options() -> None:
+    args = build_parser().parse_args(
+        [
+            "topic",
+            "ingest",
+            "--topic",
+            "topic.yaml",
+            "--manifest",
+            "manifest.yaml",
+            "--readings-dir",
+            "readings",
+            "--force",
+            "--update",
+            "--no-llm-normalize",
+        ]
+    )
+
+    assert args.command == "topic"
+    assert args.topic_command == "ingest"
+    assert args.topic == "topic.yaml"
+    assert args.manifest == "manifest.yaml"
+    assert args.readings_dir == "readings"
+    assert args.force is True
+    assert args.update is True
+    assert args.no_llm_normalize is True
+
+
+def test_cmd_topic_ingest_reports_missing_manifest_before_config_or_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.survey import ingest_cli
+
+    topic_path = _write_topic(tmp_path / "utility_nav")
+    missing_manifest = tmp_path / "missing.yaml"
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        ingest_cli,
+        "load_config",
+        lambda _config: pytest.fail("load_config should not be called"),
+    )
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        topic=str(topic_path),
+        manifest=str(missing_manifest),
+        readings_dir=None,
+        force=False,
+        update=False,
+        no_llm_normalize=False,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(ingest_cli.cmd_topic_ingest(args))
+
+    assert "not found" in str(exc_info.value)
+    assert str(missing_manifest) in str(exc_info.value)
+
+
+def test_cmd_topic_ingest_skip_only_does_not_build_reader_or_require_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.survey import ingest_cli
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+    readings_dir = topic_dir / "papers"
+    readings_dir.mkdir()
+    (readings_dir / "sample.json").write_text("{}", encoding="utf-8")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        ingest_cli,
+        "_build_staged_reader",
+        lambda _config: pytest.fail("_build_staged_reader should not be called"),
+    )
+
+    args = SimpleNamespace(
+        config="config.yaml",
+        topic=str(topic_path),
+        manifest=str(manifest_path),
+        readings_dir=None,
+        force=False,
+        update=False,
+        no_llm_normalize=False,
+    )
+
+    report = asyncio.run(ingest_cli.cmd_topic_ingest(args))
+
+    assert report.read == []
+    assert report.skipped_existing == ["sample"]
+    raw_report = json.loads(
+        (topic_dir / "state" / "ingest_report.json").read_text(encoding="utf-8")
+    )
+    assert raw_report["read"] == []
+    assert raw_report["skipped_existing"] == ["sample"]
 
 
 def test_plan_topic_ingest_skips_existing_package_without_force(tmp_path: Path) -> None:

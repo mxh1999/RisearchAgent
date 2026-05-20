@@ -79,6 +79,11 @@ def _build_llm(config_path: str, purpose: str):
 
 
 def run_topic_command(args) -> None:
+    if args.topic_command == "ingest":
+        from src.survey.ingest_cli import run_topic_ingest
+
+        run_topic_ingest(args)
+        return
     if args.topic_command == "update":
         asyncio.run(cmd_topic_update(args))
         return

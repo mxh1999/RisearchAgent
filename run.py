@@ -448,6 +448,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Topic command to run",
     )
     topic_subparsers.required = True
+    topic_ingest_parser = topic_subparsers.add_parser(
+        "ingest",
+        help="Ingest papers from a manifest into one topic reading set",
+    )
+    topic_ingest_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_ingest_parser.add_argument(
+        "--manifest",
+        required=True,
+        help="Path to topic ingest manifest YAML",
+    )
+    topic_ingest_parser.add_argument(
+        "--readings-dir",
+        help="Directory for staged reading package JSON files",
+    )
+    topic_ingest_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-read papers even when their package JSON already exists",
+    )
+    topic_ingest_parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update topic survey and SOTA artifacts after ingest",
+    )
+    topic_ingest_parser.add_argument(
+        "--no-llm-normalize",
+        action="store_true",
+        help="Use conservative exact SOTA setting grouping without LLM canonicalization",
+    )
     topic_update_parser = topic_subparsers.add_parser(
         "update",
         help="Update survey and SOTA artifacts for one topic",
