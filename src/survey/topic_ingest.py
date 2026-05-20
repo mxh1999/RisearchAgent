@@ -57,9 +57,12 @@ class IngestUpdateReport:
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        raw: dict[str, Any] = {"status": self.status}
-        if self.report_path is not None:
-            raw["report_path"] = str(self.report_path)
+        raw: dict[str, Any] = {
+            "status": self.status,
+            "report_path": (
+                str(self.report_path) if self.report_path is not None else None
+            ),
+        }
         if self.error:
             raw["error"] = self.error
         return raw
@@ -72,11 +75,11 @@ class TopicIngestReport:
     manifest_path: str | Path
     readings_dir: str | Path
     total: int
-    read: int
-    skipped_existing: int
-    failed: int
-    artifacts: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    read: list[str]
+    skipped_existing: list[str]
+    failed: list[str]
+    artifacts: dict[str, dict[str, str]] = field(default_factory=dict)
+    metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     update: IngestUpdateReport = field(
         default_factory=lambda: IngestUpdateReport(status="pending")
     )
@@ -88,11 +91,16 @@ class TopicIngestReport:
             "manifest_path": str(self.manifest_path),
             "readings_dir": str(self.readings_dir),
             "total": self.total,
-            "read": self.read,
-            "skipped_existing": self.skipped_existing,
-            "failed": self.failed,
-            "artifacts": list(self.artifacts),
-            "metadata": dict(self.metadata),
+            "read": list(self.read),
+            "skipped_existing": list(self.skipped_existing),
+            "failed": list(self.failed),
+            "artifacts": {
+                paper_id: dict(paths) for paper_id, paths in self.artifacts.items()
+            },
+            "metadata": {
+                paper_id: dict(metadata)
+                for paper_id, metadata in self.metadata.items()
+            },
             "update": self.update.to_dict(),
         }
 

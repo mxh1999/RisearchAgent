@@ -306,14 +306,19 @@ def test_write_topic_ingest_report_json_shape_and_path(tmp_path: Path) -> None:
         manifest_path="manifest.yaml",
         readings_dir="papers",
         total=2,
-        read=1,
-        skipped_existing=1,
-        failed=0,
-        artifacts=["papers/sample.json", "papers/sample.reading.md"],
-        metadata={"model": "reader-v1"},
+        read=["sample"],
+        skipped_existing=["old"],
+        failed=[],
+        artifacts={
+            "sample": {
+                "json": "papers/sample.json",
+                "markdown": "papers/sample.reading.md",
+            }
+        },
+        metadata={"sample": {"year": 2024}},
         update=IngestUpdateReport(
             status="skipped",
-            report_path="state/update_report.json",
+            report_path=None,
         ),
     )
 
@@ -322,22 +327,28 @@ def test_write_topic_ingest_report_json_shape_and_path(tmp_path: Path) -> None:
     assert report_path == topic_dir / "state" / "ingest_report.json"
     assert report_path.read_text(encoding="utf-8").endswith("\n")
     assert json.loads(report_path.read_text(encoding="utf-8")) == {
-        "artifacts": ["papers/sample.json", "papers/sample.reading.md"],
-        "failed": 0,
+        "artifacts": {
+            "sample": {
+                "json": "papers/sample.json",
+                "markdown": "papers/sample.reading.md",
+            }
+        },
+        "failed": [],
         "manifest_path": "manifest.yaml",
-        "metadata": {"model": "reader-v1"},
-        "read": 1,
+        "metadata": {"sample": {"year": 2024}},
+        "read": ["sample"],
         "readings_dir": "papers",
-        "skipped_existing": 1,
+        "skipped_existing": ["old"],
         "topic_id": "utility_nav",
         "topic_name": "Utility Navigation",
         "total": 2,
         "update": {
-            "report_path": "state/update_report.json",
+            "report_path": None,
             "status": "skipped",
         },
     }
     assert IngestUpdateReport(status="failed", error="boom").to_dict() == {
         "status": "failed",
+        "report_path": None,
         "error": "boom",
     }
