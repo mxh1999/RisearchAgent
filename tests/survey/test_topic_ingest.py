@@ -42,6 +42,7 @@ def test_load_ingest_manifest_returns_entries_with_resolved_sources_and_metadata
 
     manifest = load_ingest_manifest(manifest_path)
 
+    assert manifest.manifest_path == manifest_path
     assert [entry.paper_id for entry in manifest.papers] == ["sample_pdf", "sample_text"]
     assert manifest.papers[0].title == "Sample PDF"
     assert manifest.papers[0].source_kind == "pdf"
@@ -148,6 +149,11 @@ def test_load_ingest_manifest_rejects_missing_source_file(tmp_path: Path) -> Non
         load_ingest_manifest(manifest_path)
 
 
+def test_load_ingest_manifest_rejects_missing_manifest(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not found"):
+        load_ingest_manifest(tmp_path / "missing.yaml")
+
+
 def test_load_ingest_manifest_rejects_source_directory(tmp_path: Path) -> None:
     source_dir = tmp_path / "source_dir"
     source_dir.mkdir()
@@ -162,4 +168,21 @@ def test_load_ingest_manifest_rejects_source_directory(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="is a directory"):
+        load_ingest_manifest(manifest_path)
+
+
+def test_load_ingest_manifest_rejects_boolean_year(tmp_path: Path) -> None:
+    (tmp_path / "paper.txt").write_text("paper text", encoding="utf-8")
+    manifest_path = _write_manifest(
+        tmp_path,
+        """
+        papers:
+          - paper_id: bad_year
+            title: Bad Year
+            text_file: paper.txt
+            year: true
+        """,
+    )
+
+    with pytest.raises(ValueError, match="year"):
         load_ingest_manifest(manifest_path)

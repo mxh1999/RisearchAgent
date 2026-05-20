@@ -22,12 +22,15 @@ class IngestManifestEntry:
 
 @dataclass(frozen=True)
 class IngestManifest:
+    manifest_path: Path
     papers: list[IngestManifestEntry]
 
 
 def load_ingest_manifest(path: Path) -> IngestManifest:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"Error loading ingest manifest {path}: not found") from exc
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid ingest manifest YAML: {path}") from exc
 
@@ -46,7 +49,7 @@ def load_ingest_manifest(path: Path) -> IngestManifest:
     for index, paper in enumerate(papers):
         entries.append(_load_entry(paper, index, base_dir, seen_paper_ids))
 
-    return IngestManifest(papers=entries)
+    return IngestManifest(manifest_path=path, papers=entries)
 
 
 def _load_entry(
@@ -104,7 +107,7 @@ def _load_metadata(paper: dict[str, Any], paper_id: str) -> dict[str, MetadataVa
     metadata: dict[str, MetadataValue] = {}
     if "year" in paper:
         year = paper["year"]
-        if not isinstance(year, int):
+        if not isinstance(year, int) or isinstance(year, bool):
             raise ValueError(f"Paper {paper_id} metadata year must be an int")
         metadata["year"] = year
     for key in ("venue", "source_url", "notes"):
