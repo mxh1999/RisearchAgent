@@ -11,6 +11,7 @@ from src.config import load_config
 
 class PaperReaderArgumentParser(argparse.ArgumentParser):
     def parse_args(self, args=None, namespace=None):
+        raw_args = sys.argv[1:] if args is None else list(args)
         parsed = super().parse_args(args, namespace)
         if (
             getattr(parsed, "command", None) == "survey"
@@ -66,6 +67,13 @@ class PaperReaderArgumentParser(argparse.ArgumentParser):
             and getattr(parsed, "skip_sota", False)
         ):
             self.error("topic update cannot use both --skip-survey and --skip-sota")
+        if (
+            getattr(parsed, "command", None) == "topic"
+            and getattr(parsed, "topic_command", None) == "download"
+            and getattr(parsed, "all", False)
+            and any(arg == "--limit" or arg.startswith("--limit=") for arg in raw_args)
+        ):
+            self.error("topic download cannot use both --all and --limit")
         return parsed
 
 
@@ -487,6 +495,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-llm-normalize",
         action="store_true",
         help="Use conservative exact SOTA setting grouping without LLM canonicalization",
+    )
+    topic_download_parser = topic_subparsers.add_parser(
+        "download",
+        help="Download discovered topic candidate PDFs and write an ingest manifest",
+    )
+    topic_download_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_download_parser.add_argument(
+        "--candidates",
+        help="Path to discovery_candidates.json",
+    )
+    topic_download_parser.add_argument(
+        "--manifest",
+        help="Output path for ingest_manifest.yaml",
+    )
+    topic_download_parser.add_argument(
+        "--limit",
+        type=_positive_int,
+        default=10,
+        help="Maximum candidate PDFs to materialize",
+    )
+    topic_download_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Download all eligible candidates instead of applying --limit",
+    )
+    topic_download_parser.add_argument(
+        "--include-existing",
+        action="store_true",
+        help="Include papers already present in the topic papers directory",
+    )
+    topic_download_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download PDFs even when the target file already exists",
     )
     topic_discover_parser = topic_subparsers.add_parser(
         "discover",

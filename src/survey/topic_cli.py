@@ -84,6 +84,11 @@ def run_topic_command(args) -> None:
 
         run_topic_discover(args)
         return
+    if args.topic_command == "download":
+        from src.survey.download_cli import run_topic_download
+
+        run_topic_download(args)
+        return
     if args.topic_command == "ingest":
         from src.survey.ingest_cli import run_topic_ingest
 
