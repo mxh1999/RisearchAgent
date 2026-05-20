@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Awaitable, Callable, Union
 
 import yaml
 
@@ -11,6 +11,8 @@ from src.reader.reading_renderer import validate_safe_paper_id
 from src.survey.models import TopicProfile
 
 MetadataValue = Union[int, str]
+ReadService = Callable[..., Awaitable[tuple[Path, Path]]]
+UpdateService = Callable[..., Awaitable[Path]]
 
 
 @dataclass(frozen=True)
@@ -185,6 +187,90 @@ def write_topic_ingest_report(topic_dir: Path, report: TopicIngestReport) -> Pat
         encoding="utf-8",
     )
     return report_path
+
+
+async def ingest_topic_papers(
+    topic_path: Path,
+    manifest_path: Path,
+    readings_dir: Path | None,
+    force: bool,
+    update: bool,
+    no_llm_normalize: bool,
+    read_service: ReadService,
+    update_service: UpdateService | None,
+) -> TopicIngestReport:
+    plan = plan_topic_ingest(
+        topic_path=topic_path,
+        manifest_path=manifest_path,
+        readings_dir=readings_dir,
+        force=force,
+    )
+    report = TopicIngestReport(
+        topic_id=plan.topic.topic_id,
+        topic_name=plan.topic.name,
+        manifest_path=plan.manifest.manifest_path,
+        readings_dir=plan.readings_dir,
+        total=len(plan.manifest.papers),
+        read=[],
+        skipped_existing=[entry.paper_id for entry in plan.skipped_existing],
+        failed=[],
+        update=IngestUpdateReport(status="pending"),
+    )
+
+    for entry in plan.to_read:
+        try:
+            json_path, markdown_path = await read_service(
+                paper_id=entry.paper_id,
+                title=entry.title,
+                source_path=entry.source_path,
+                source_kind=entry.source_kind,
+                output_dir=plan.readings_dir,
+                topic=plan.topic,
+            )
+        except Exception:
+            report.failed.append(entry.paper_id)
+            report.update = IngestUpdateReport(status="skipped")
+            write_topic_ingest_report(plan.topic_dir, report)
+            raise
+
+        report.read.append(entry.paper_id)
+        report.artifacts[entry.paper_id] = {
+            "json": str(json_path),
+            "markdown": str(markdown_path),
+        }
+        if entry.metadata:
+            report.metadata[entry.paper_id] = dict(entry.metadata)
+
+    if not update:
+        report.update = IngestUpdateReport(status="skipped")
+        write_topic_ingest_report(plan.topic_dir, report)
+        return report
+
+    if update_service is None:
+        report.update = IngestUpdateReport(
+            status="failed",
+            error="update_service is required when update=True",
+        )
+        write_topic_ingest_report(plan.topic_dir, report)
+        raise ValueError("update_service is required when update=True")
+
+    try:
+        update_report_path = await update_service(
+            topic_path=plan.topic_path,
+            readings_dir=plan.readings_dir,
+            no_llm_normalize=no_llm_normalize,
+        )
+    except Exception as exc:
+        report.update = IngestUpdateReport(status="failed", error=str(exc))
+        write_topic_ingest_report(plan.topic_dir, report)
+        raise
+
+    report.update = IngestUpdateReport(
+        status="updated",
+        report_path=str(update_report_path),
+    )
+    write_topic_ingest_report(plan.topic_dir, report)
+    return report
 
 
 def _load_entry(

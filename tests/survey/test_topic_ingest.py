@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import textwrap
 from pathlib import Path
 
 import pytest
 
+from src.reader.staged_models import PaperReadingPackage
 from src.survey.topic_ingest import (
     IngestUpdateReport,
     TopicIngestReport,
+    ingest_topic_papers,
     load_ingest_manifest,
     plan_topic_ingest,
     write_topic_ingest_report,
@@ -52,6 +55,76 @@ def _write_valid_manifest(topic_dir: Path) -> Path:
             year: 2024
         """,
     )
+
+
+class FakeReadService:
+    def __init__(self, fail_on: str | None = None) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.fail_on = fail_on
+
+    async def __call__(
+        self,
+        *,
+        paper_id: str,
+        title: str,
+        source_path: Path,
+        source_kind: str,
+        output_dir: Path,
+        topic: object,
+    ) -> tuple[Path, Path]:
+        self.calls.append(
+            {
+                "paper_id": paper_id,
+                "title": title,
+                "source_path": source_path,
+                "source_kind": source_kind,
+                "output_dir": output_dir,
+                "topic": topic,
+            }
+        )
+        if self.fail_on == paper_id:
+            raise RuntimeError(f"read failed: {paper_id}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        package = PaperReadingPackage(
+            paper_id=paper_id,
+            title=title,
+            source_path=str(source_path),
+        )
+        json_path = output_dir / f"{paper_id}.json"
+        markdown_path = output_dir / f"{paper_id}.reading.md"
+        json_path.write_text(
+            json.dumps(package.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        markdown_path.write_text(f"# {title}\n", encoding="utf-8")
+        return json_path, markdown_path
+
+
+class FakeTopicUpdater:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.fail = fail
+
+    async def __call__(
+        self,
+        *,
+        topic_path: Path,
+        readings_dir: Path,
+        no_llm_normalize: bool,
+    ) -> Path:
+        self.calls.append(
+            {
+                "topic_path": topic_path,
+                "readings_dir": readings_dir,
+                "no_llm_normalize": no_llm_normalize,
+            }
+        )
+        if self.fail:
+            raise RuntimeError("update failed")
+        report_path = topic_path.parent / "state" / "topic_update_report.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text('{"status": "ok"}\n', encoding="utf-8")
+        return report_path
 
 
 def test_load_ingest_manifest_returns_entries_with_resolved_sources_and_metadata(
@@ -351,4 +424,161 @@ def test_write_topic_ingest_report_json_shape_and_path(tmp_path: Path) -> None:
         "status": "failed",
         "report_path": None,
         "error": "boom",
+    }
+
+
+def test_ingest_topic_papers_reads_missing_paper_writes_report_and_preserves_topic(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    topic_before = topic_path.read_text(encoding="utf-8")
+    manifest_path = _write_valid_manifest(topic_dir)
+    read_service = FakeReadService()
+
+    report = asyncio.run(
+        ingest_topic_papers(
+            topic_path=topic_path,
+            manifest_path=manifest_path,
+            readings_dir=None,
+            force=False,
+            update=False,
+            no_llm_normalize=False,
+            read_service=read_service,
+            update_service=None,
+        )
+    )
+
+    assert topic_path.read_text(encoding="utf-8") == topic_before
+    assert report.read == ["sample"]
+    assert report.skipped_existing == []
+    assert report.failed == []
+    assert report.artifacts == {
+        "sample": {
+            "json": str(topic_dir / "papers" / "sample.json"),
+            "markdown": str(topic_dir / "papers" / "sample.reading.md"),
+        }
+    }
+    assert report.metadata == {"sample": {"year": 2024}}
+    assert report.update.to_dict() == {"status": "skipped", "report_path": None}
+    assert len(read_service.calls) == 1
+    call = dict(read_service.calls[0])
+    topic = call.pop("topic")
+    assert call == {
+        "paper_id": "sample",
+        "title": "Sample Paper",
+        "source_path": (topic_dir / "sources" / "sample.txt").resolve(),
+        "source_kind": "text_file",
+        "output_dir": topic_dir / "papers",
+    }
+    assert getattr(topic, "topic_id") == "utility_nav"
+    report_path = topic_dir / "state" / "ingest_report.json"
+    assert json.loads(report_path.read_text(encoding="utf-8")) == report.to_dict()
+
+
+def test_ingest_topic_papers_skips_existing_and_updates_with_forwarded_options(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+    readings_dir = tmp_path / "readings"
+    readings_dir.mkdir()
+    (readings_dir / "sample.json").write_text("{}", encoding="utf-8")
+    read_service = FakeReadService()
+    update_service = FakeTopicUpdater()
+
+    report = asyncio.run(
+        ingest_topic_papers(
+            topic_path=topic_path,
+            manifest_path=manifest_path,
+            readings_dir=readings_dir,
+            force=False,
+            update=True,
+            no_llm_normalize=True,
+            read_service=read_service,
+            update_service=update_service,
+        )
+    )
+
+    assert read_service.calls == []
+    assert report.read == []
+    assert report.skipped_existing == ["sample"]
+    assert report.failed == []
+    assert update_service.calls == [
+        {
+            "topic_path": topic_path,
+            "readings_dir": readings_dir,
+            "no_llm_normalize": True,
+        }
+    ]
+    assert report.update.to_dict() == {
+        "status": "updated",
+        "report_path": str(topic_dir / "state" / "topic_update_report.json"),
+    }
+    assert json.loads(
+        (topic_dir / "state" / "ingest_report.json").read_text(encoding="utf-8")
+    ) == report.to_dict()
+
+
+def test_ingest_topic_papers_failed_read_writes_failed_report_and_reraises(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+    read_service = FakeReadService(fail_on="sample")
+
+    with pytest.raises(RuntimeError, match="read failed"):
+        asyncio.run(
+            ingest_topic_papers(
+                topic_path=topic_path,
+                manifest_path=manifest_path,
+                readings_dir=None,
+                force=False,
+                update=True,
+                no_llm_normalize=False,
+                read_service=read_service,
+                update_service=FakeTopicUpdater(),
+            )
+        )
+
+    raw_report = json.loads(
+        (topic_dir / "state" / "ingest_report.json").read_text(encoding="utf-8")
+    )
+    assert raw_report["read"] == []
+    assert raw_report["failed"] == ["sample"]
+    assert raw_report["update"] == {"status": "skipped", "report_path": None}
+
+
+def test_ingest_topic_papers_failed_update_writes_failed_report_and_reraises(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+
+    with pytest.raises(RuntimeError, match="update failed"):
+        asyncio.run(
+            ingest_topic_papers(
+                topic_path=topic_path,
+                manifest_path=manifest_path,
+                readings_dir=None,
+                force=False,
+                update=True,
+                no_llm_normalize=False,
+                read_service=FakeReadService(),
+                update_service=FakeTopicUpdater(fail=True),
+            )
+        )
+
+    raw_report = json.loads(
+        (topic_dir / "state" / "ingest_report.json").read_text(encoding="utf-8")
+    )
+    assert raw_report["read"] == ["sample"]
+    assert raw_report["failed"] == []
+    assert raw_report["update"] == {
+        "status": "failed",
+        "report_path": None,
+        "error": "update failed",
     }
