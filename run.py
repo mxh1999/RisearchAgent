@@ -500,7 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
     topic_discover_parser.add_argument(
         "--max-results-per-query",
         type=_positive_int,
-        default=10,
+        default=20,
         help="Maximum arXiv results to fetch for each topic search query",
     )
     topic_discover_parser.add_argument(

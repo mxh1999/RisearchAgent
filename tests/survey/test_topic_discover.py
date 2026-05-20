@@ -129,6 +129,22 @@ def test_topic_discover_parser_accepts_all_options() -> None:
     assert args.include_existing is True
 
 
+def test_topic_discover_parser_defaults_match_design() -> None:
+    args = build_parser().parse_args(
+        [
+            "topic",
+            "discover",
+            "--topic",
+            "data/topics/utility_nav/topic.yaml",
+        ]
+    )
+
+    assert args.max_results_per_query == 20
+    assert args.sort == "submitted"
+    assert args.days_lookback == 365
+    assert args.include_existing is False
+
+
 @pytest.mark.parametrize(
     "option,value",
     [
@@ -409,6 +425,8 @@ def test_discovery_renderers_and_artifact_writes(tmp_path: Path) -> None:
     assert "# Discovery Candidates: Utility Navigation" in markdown
     assert "| direct |" in markdown
     assert "First Paper" in markdown
+    assert "This paper studies utility for embodied navigation." in markdown
+    assert "Abstract Preview" in markdown
     manifest_raw = yaml.safe_load(manifest)
     assert manifest_raw["papers"][0]["paper_id"] == "2401.00001"
     assert manifest_raw["papers"][0]["pdf_url"] == "https://arxiv.org/pdf/2401.00001"

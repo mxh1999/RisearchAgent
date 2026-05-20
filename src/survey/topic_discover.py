@@ -177,11 +177,12 @@ def render_discovery_markdown(report: DiscoveryReport, topic: TopicProfile) -> s
     if report.candidates:
         lines.extend(
             [
-                "| Paper ID | Title | Published | Year | Categories | Queries | PDF | Source |",
+                "| Paper ID | Title | Published | Year | Categories | Queries | Source | Abstract Preview |",
                 "| --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for candidate in report.candidates:
+            abstract_preview = candidate.abstract[:240].strip()
             lines.append(
                 "| "
                 + " | ".join(
@@ -192,8 +193,8 @@ def render_discovery_markdown(report: DiscoveryReport, topic: TopicProfile) -> s
                         str(candidate.year),
                         _markdown_cell(", ".join(candidate.categories)),
                         _markdown_cell(", ".join(candidate.matched_queries)),
-                        _markdown_cell(candidate.pdf_url),
                         _markdown_cell(candidate.source_url),
+                        _markdown_cell(abstract_preview),
                     ]
                 )
                 + " |"
