@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
+from src.survey.arxiv_provider import convert_arxiv_result
 from src.survey.models import TopicProfile, TopicQuery
 from src.survey.topic_discover import (
     RawDiscoveryPaper,
@@ -55,6 +57,38 @@ def _paper(
         query_name=query_name,
         query_purpose=f"{query_name} purpose",
     )
+
+
+def test_convert_arxiv_result_to_raw_discovery_paper() -> None:
+    result = SimpleNamespace(
+        entry_id="https://arxiv.org/abs/2401.00001v2",
+        title="  A Useful Paper  ",
+        summary="\n  This paper studies useful behavior.  \n",
+        authors=[
+            SimpleNamespace(name="A. Researcher"),
+            SimpleNamespace(name="B. Researcher"),
+        ],
+        published=datetime(2024, 1, 2, tzinfo=timezone.utc),
+        categories=["cs.RO", "cs.CV"],
+        pdf_url="https://arxiv.org/pdf/2401.00001v2",
+    )
+
+    paper = convert_arxiv_result(
+        result,
+        query_name="direct",
+        query_purpose="Direct topic query.",
+    )
+
+    assert paper.arxiv_id == "2401.00001"
+    assert paper.title == "A Useful Paper"
+    assert paper.abstract == "This paper studies useful behavior."
+    assert paper.authors == ["A. Researcher", "B. Researcher"]
+    assert paper.published == datetime(2024, 1, 2, tzinfo=timezone.utc)
+    assert paper.categories == ["cs.RO", "cs.CV"]
+    assert paper.pdf_url == "https://arxiv.org/pdf/2401.00001"
+    assert paper.source_url == "https://arxiv.org/abs/2401.00001"
+    assert paper.query_name == "direct"
+    assert paper.query_purpose == "Direct topic query."
 
 
 def test_build_discovery_report_deduplicates_queries_and_excludes_existing(
