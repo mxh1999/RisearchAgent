@@ -7,6 +7,37 @@ import pytest
 
 from run import build_parser
 from src.reader import staged_cli
+from src.reader.staged_models import PaperReadingPackage
+
+
+class FakeStagedReader:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def read(
+        self,
+        *,
+        paper_id,
+        title,
+        source_path,
+        pages,
+        topic,
+    ) -> PaperReadingPackage:
+        self.calls.append(
+            {
+                "paper_id": paper_id,
+                "title": title,
+                "source_path": source_path,
+                "pages": pages,
+                "topic": topic,
+            }
+        )
+        return PaperReadingPackage(
+            paper_id=paper_id,
+            title=title,
+            source_path=source_path,
+            pages=pages,
+        )
 
 
 def test_read_staged_text_file_args() -> None:
@@ -91,6 +122,37 @@ def test_read_staged_rejects_unsafe_paper_id_before_extraction(monkeypatch) -> N
 
     assert "Unsafe paper_id" in str(exc_info.value)
     assert extraction_called is False
+
+
+def test_read_staged_source_reads_text_file_and_writes_package(tmp_path) -> None:
+    source_path = tmp_path / "paper.txt"
+    source_path.write_text("Abstract\nMethod", encoding="utf-8")
+    output_dir = tmp_path / "out"
+    reader = FakeStagedReader()
+
+    json_path, markdown_path = asyncio.run(
+        staged_cli.read_staged_source(
+            reader=reader,
+            paper_id="sample",
+            title="Sample Paper",
+            source_path=source_path,
+            source_kind="text_file",
+            output_dir=output_dir,
+            topic=None,
+        )
+    )
+
+    assert json_path == output_dir / "sample.json"
+    assert markdown_path == output_dir / "sample.reading.md"
+    assert json_path.exists()
+    assert markdown_path.exists()
+    assert len(reader.calls) == 1
+    assert reader.calls[0]["paper_id"] == "sample"
+    assert reader.calls[0]["title"] == "Sample Paper"
+    assert reader.calls[0]["source_path"] == str(source_path)
+    assert reader.calls[0]["topic"] is None
+    assert len(reader.calls[0]["pages"]) == 1
+    assert reader.calls[0]["pages"][0].text == "Abstract\nMethod"
 
 
 def test_load_topic_rejects_missing_yaml(tmp_path) -> None:

@@ -15,6 +15,37 @@ from src.reader.staged_reader import StagedPaperReader
 from src.survey.models import TopicProfile
 
 
+async def read_staged_source(
+    reader,
+    paper_id: str,
+    title: str,
+    source_path: Path,
+    source_kind: str,
+    output_dir: Path,
+    topic: Optional[TopicProfile],
+) -> tuple[Path, Path]:
+    try:
+        validate_safe_paper_id(paper_id)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if source_kind == "pdf":
+        pages = extract_pages_from_pdf(source_path)
+    elif source_kind == "text_file":
+        pages = extract_pages_from_text_file(source_path)
+    else:
+        raise ValueError(f"Unknown source_kind: {source_kind}")
+
+    package = await reader.read(
+        paper_id=paper_id,
+        title=title,
+        source_path=str(source_path),
+        pages=pages,
+        topic=topic,
+    )
+    return write_reading_package(package, output_dir)
+
+
 async def cmd_read_staged(args) -> None:
     try:
         validate_safe_paper_id(args.paper_id)
@@ -53,21 +84,17 @@ async def cmd_read_staged(args) -> None:
         topic_path=topic_path,
     )
 
-    source_path = Path(args.pdf or args.text_file)
-    if args.pdf:
-        pages = extract_pages_from_pdf(source_path)
-    else:
-        pages = extract_pages_from_text_file(source_path)
-
     reader = StagedPaperReader(GeminiClient(llm_config), model=llm_config.reader_model)
-    package = await reader.read(
+    source_path = Path(args.pdf or args.text_file)
+    json_path, markdown_path = await read_staged_source(
+        reader=reader,
         paper_id=args.paper_id,
         title=args.title,
-        source_path=str(source_path),
-        pages=pages,
+        source_path=source_path,
+        source_kind="pdf" if args.pdf else "text_file",
+        output_dir=output_dir,
         topic=topic,
     )
-    json_path, markdown_path = write_reading_package(package, output_dir)
 
     print(f"Reading JSON: {json_path}")
     print(f"Reading Markdown: {markdown_path}")
