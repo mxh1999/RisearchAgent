@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,9 +22,14 @@ from src.survey.topic_discover import (
 
 
 class FakeDiscoveryProvider:
-    def __init__(self, papers_by_query: dict[str, list[RawDiscoveryPaper]] | None = None):
+    def __init__(
+        self,
+        papers_by_query: dict[str, list[RawDiscoveryPaper]] | None = None,
+        fail: bool = False,
+    ):
         self.papers_by_query = papers_by_query or {}
         self.calls: list[tuple[str, str, str, int, str]] = []
+        self.fail = fail
 
     async def search(
         self,
@@ -35,6 +40,8 @@ class FakeDiscoveryProvider:
         sort: str,
     ) -> list[RawDiscoveryPaper]:
         self.calls.append((query, query_name, query_purpose, max_results, sort))
+        if self.fail:
+            raise RuntimeError("provider failed")
         return list(self.papers_by_query.get(query_name, []))
 
 
@@ -77,6 +84,10 @@ def _paper(
         query_name=query_name,
         query_purpose=f"{query_name} purpose",
     )
+
+
+def _published_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
 def _write_topic_yaml(topic_dir: Path, topic: TopicProfile | None = None) -> Path:
@@ -156,7 +167,7 @@ def test_cmd_topic_discover_writes_artifacts_and_calls_provider(
                     "2605.00001",
                     "Fresh Direct Paper",
                     "direct",
-                    published="2026-05-20T00:00:00+00:00",
+                    published=_published_days_ago(1),
                 ),
                 _paper(
                     "2301.00001",
@@ -170,7 +181,7 @@ def test_cmd_topic_discover_writes_artifacts_and_calls_provider(
                     "2605.00002",
                     "Fresh Benchmark Paper",
                     "benchmark",
-                    published="2026-05-19T00:00:00+00:00",
+                    published=_published_days_ago(2),
                 )
             ],
         }
@@ -234,6 +245,31 @@ def test_cmd_topic_discover_rejects_empty_search_queries_before_provider(
         asyncio.run(cmd_topic_discover(args, provider=provider))
 
     assert provider.calls == []
+
+
+def test_cmd_topic_discover_provider_failure_writes_no_partial_artifacts(
+    tmp_path: Path,
+) -> None:
+    from src.survey.discover_cli import cmd_topic_discover
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic_yaml(topic_dir)
+    provider = FakeDiscoveryProvider(fail=True)
+    args = SimpleNamespace(
+        topic=str(topic_path),
+        max_results_per_query=5,
+        sort="submitted",
+        days_lookback=30,
+        include_existing=False,
+    )
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        asyncio.run(cmd_topic_discover(args, provider=provider))
+
+    assert provider.calls
+    assert not (topic_dir / "state" / "discovery_candidates.json").exists()
+    assert not (topic_dir / "discovery.md").exists()
+    assert not (topic_dir / "ingest_manifest.draft.yaml").exists()
 
 
 def test_cmd_topic_discover_rejects_topic_id_mismatch_before_provider(
