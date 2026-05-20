@@ -104,6 +104,26 @@ def test_build_discovery_report_include_existing_keeps_existing(tmp_path: Path) 
     assert report.excluded_existing == []
 
 
+def test_build_discovery_report_sorts_same_date_by_paper_id(tmp_path: Path) -> None:
+    report = build_discovery_report(
+        topic=_topic(),
+        raw_papers=[
+            _paper("2401.00003", "Third Paper", "direct"),
+            _paper("2401.00001", "First Paper", "direct"),
+            _paper("2401.00002", "Second Paper", "direct"),
+        ],
+        topic_dir=tmp_path,
+        include_existing=False,
+        generated_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+    )
+
+    assert [candidate.paper_id for candidate in report.candidates] == [
+        "2401.00001",
+        "2401.00002",
+        "2401.00003",
+    ]
+
+
 def test_discovery_renderers_and_artifact_writes(tmp_path: Path) -> None:
     report = build_discovery_report(
         topic=_topic(),

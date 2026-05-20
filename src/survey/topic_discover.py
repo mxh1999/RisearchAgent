@@ -124,6 +124,10 @@ def build_discovery_report(
 
     candidates = sorted(
         candidates_by_id.values(),
+        key=lambda candidate: candidate.paper_id,
+    )
+    candidates = sorted(
+        candidates,
         key=lambda candidate: candidate.published,
         reverse=True,
     )
