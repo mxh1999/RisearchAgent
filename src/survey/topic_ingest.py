@@ -214,6 +214,11 @@ async def ingest_topic_papers(
         read=[],
         skipped_existing=[entry.paper_id for entry in plan.skipped_existing],
         failed=[],
+        metadata={
+            entry.paper_id: dict(entry.metadata)
+            for entry in [*plan.to_read, *plan.skipped_existing]
+            if entry.metadata
+        },
         update=IngestUpdateReport(status="pending"),
     )
 
@@ -238,9 +243,6 @@ async def ingest_topic_papers(
             "json": str(json_path),
             "markdown": str(markdown_path),
         }
-        if entry.metadata:
-            report.metadata[entry.paper_id] = dict(entry.metadata)
-
     if not update:
         report.update = IngestUpdateReport(status="skipped")
         write_topic_ingest_report(plan.topic_dir, report)
@@ -260,6 +262,10 @@ async def ingest_topic_papers(
             readings_dir=plan.readings_dir,
             no_llm_normalize=no_llm_normalize,
         )
+    except SystemExit as exc:
+        report.update = IngestUpdateReport(status="failed", error=str(exc))
+        write_topic_ingest_report(plan.topic_dir, report)
+        raise
     except Exception as exc:
         report.update = IngestUpdateReport(status="failed", error=str(exc))
         write_topic_ingest_report(plan.topic_dir, report)

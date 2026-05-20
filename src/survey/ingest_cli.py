@@ -112,6 +112,9 @@ async def _run_topic_update(
     from src.survey.topic_cli import _build_llm
 
     context = load_topic_update_context(topic_path, readings_dir)
+    if not context.sota_records:
+        raise SystemExit("No experiment records found in reading packages.")
+
     survey_llm, survey_model = _build_llm(config_path, purpose="topic ingest update")
     sota_llm = None
     sota_model = None

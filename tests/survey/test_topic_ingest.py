@@ -103,9 +103,10 @@ class FakeReadService:
 
 
 class FakeTopicUpdater:
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, system_exit: bool = False) -> None:
         self.calls: list[dict[str, object]] = []
         self.fail = fail
+        self.system_exit = system_exit
 
     async def __call__(
         self,
@@ -121,6 +122,8 @@ class FakeTopicUpdater:
                 "no_llm_normalize": no_llm_normalize,
             }
         )
+        if self.system_exit:
+            raise SystemExit("update exited")
         if self.fail:
             raise RuntimeError("update failed")
         report_path = topic_path.parent / "state" / "topic_update_report.json"
@@ -400,6 +403,7 @@ def test_cmd_topic_ingest_skip_only_does_not_build_reader_or_require_api_key(
     )
     assert raw_report["read"] == []
     assert raw_report["skipped_existing"] == ["sample"]
+    assert raw_report["metadata"] == {"sample": {"year": 2024}}
 
 
 def test_plan_topic_ingest_skips_existing_package_without_force(tmp_path: Path) -> None:
@@ -606,6 +610,7 @@ def test_ingest_topic_papers_skips_existing_and_updates_with_forwarded_options(
     assert report.read == []
     assert report.skipped_existing == ["sample"]
     assert report.failed == []
+    assert report.metadata == {"sample": {"year": 2024}}
     assert update_service.calls == [
         {
             "topic_path": topic_path,
@@ -683,3 +688,83 @@ def test_ingest_topic_papers_failed_update_writes_failed_report_and_reraises(
         "report_path": None,
         "error": "update failed",
     }
+
+
+def test_ingest_topic_papers_system_exit_update_writes_failed_report_and_reraises(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+
+    with pytest.raises(SystemExit, match="update exited"):
+        asyncio.run(
+            ingest_topic_papers(
+                topic_path=topic_path,
+                manifest_path=manifest_path,
+                readings_dir=None,
+                force=False,
+                update=True,
+                no_llm_normalize=False,
+                read_service=FakeReadService(),
+                update_service=FakeTopicUpdater(system_exit=True),
+            )
+        )
+
+    raw_report = json.loads(
+        (topic_dir / "state" / "ingest_report.json").read_text(encoding="utf-8")
+    )
+    assert raw_report["read"] == ["sample"]
+    assert raw_report["failed"] == []
+    assert raw_report["update"] == {
+        "status": "failed",
+        "report_path": None,
+        "error": "update exited",
+    }
+
+
+def test_cmd_topic_ingest_update_rejects_no_experiment_records_before_llm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.survey import ingest_cli
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+    papers_dir = topic_dir / "papers"
+    papers_dir.mkdir()
+    package = PaperReadingPackage(
+        paper_id="sample",
+        title="Sample Paper",
+        source_path=str(topic_dir / "sources" / "sample.txt"),
+    )
+    (papers_dir / "sample.json").write_text(
+        json.dumps(package.to_dict()),
+        encoding="utf-8",
+    )
+
+    def fail_if_llm_is_built(*_args, **_kwargs):
+        raise AssertionError("LLM should not be built before SOTA preflight")
+
+    monkeypatch.setattr("src.survey.topic_cli._build_llm", fail_if_llm_is_built)
+    args = SimpleNamespace(
+        config="config.yaml",
+        topic=str(topic_path),
+        manifest=str(manifest_path),
+        readings_dir=None,
+        force=False,
+        update=True,
+        no_llm_normalize=False,
+    )
+
+    with pytest.raises(SystemExit, match="No experiment records"):
+        asyncio.run(ingest_cli.cmd_topic_ingest(args))
+
+    raw_report = json.loads(
+        (topic_dir / "state" / "ingest_report.json").read_text(encoding="utf-8")
+    )
+    assert raw_report["read"] == []
+    assert raw_report["skipped_existing"] == ["sample"]
+    assert raw_report["update"]["status"] == "failed"
+    assert not (topic_dir / "survey.md").exists()
