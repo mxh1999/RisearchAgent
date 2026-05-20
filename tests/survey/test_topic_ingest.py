@@ -1,17 +1,57 @@
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
 import pytest
 
-from src.survey.topic_ingest import load_ingest_manifest
+from src.survey.topic_ingest import (
+    IngestUpdateReport,
+    TopicIngestReport,
+    load_ingest_manifest,
+    plan_topic_ingest,
+    write_topic_ingest_report,
+)
+
+
+def _write_topic(topic_dir: Path, topic_id: str = "utility_nav") -> Path:
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    topic_path = topic_dir / "topic.yaml"
+    topic_path.write_text(
+        textwrap.dedent(
+            f"""
+            topic_id: {topic_id}
+            name: Utility Navigation
+            description: Task-conditioned utility over 3D memory.
+            intent: Build a focused reading set.
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    return topic_path
 
 
 def _write_manifest(tmp_path: Path, content: str) -> Path:
     path = tmp_path / "manifest.yaml"
     path.write_text(textwrap.dedent(content), encoding="utf-8")
     return path
+
+
+def _write_valid_manifest(topic_dir: Path) -> Path:
+    source_path = topic_dir / "sources" / "sample.txt"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text("paper text", encoding="utf-8")
+    return _write_manifest(
+        topic_dir,
+        """
+        papers:
+          - paper_id: sample
+            title: Sample Paper
+            text_file: sources/sample.txt
+            year: 2024
+        """,
+    )
 
 
 def test_load_ingest_manifest_returns_entries_with_resolved_sources_and_metadata(
@@ -186,3 +226,118 @@ def test_load_ingest_manifest_rejects_boolean_year(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="year"):
         load_ingest_manifest(manifest_path)
+
+
+def test_plan_topic_ingest_skips_existing_package_without_force(tmp_path: Path) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+    readings_dir = topic_dir / "papers"
+    readings_dir.mkdir()
+    (readings_dir / "sample.json").write_text("{}", encoding="utf-8")
+
+    plan = plan_topic_ingest(
+        topic_path=topic_path,
+        manifest_path=manifest_path,
+        readings_dir=None,
+        force=False,
+    )
+
+    assert plan.topic_path == topic_path
+    assert plan.topic_dir == topic_dir
+    assert plan.topic.topic_id == "utility_nav"
+    assert plan.manifest.manifest_path == manifest_path
+    assert plan.readings_dir == readings_dir
+    assert plan.to_read == []
+    assert len(plan.skipped_existing) == 1
+    skipped = plan.skipped_existing[0]
+    assert skipped.paper_id == "sample"
+    assert skipped.title == "Sample Paper"
+    assert skipped.source_kind == "text_file"
+    assert skipped.source_path == (topic_dir / "sources" / "sample.txt").resolve()
+    assert skipped.output_json_path == readings_dir / "sample.json"
+    assert skipped.output_markdown_path == readings_dir / "sample.reading.md"
+    assert skipped.metadata == {"year": 2024}
+
+
+def test_plan_topic_ingest_reads_existing_package_with_force(tmp_path: Path) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+    readings_dir = topic_dir / "papers"
+    readings_dir.mkdir()
+    (readings_dir / "sample.json").write_text("{}", encoding="utf-8")
+
+    plan = plan_topic_ingest(
+        topic_path=topic_path,
+        manifest_path=manifest_path,
+        readings_dir=None,
+        force=True,
+    )
+
+    assert [entry.paper_id for entry in plan.to_read] == ["sample"]
+    assert plan.skipped_existing == []
+
+
+def test_plan_topic_ingest_uses_readings_dir_override(tmp_path: Path) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    manifest_path = _write_valid_manifest(topic_dir)
+    override_dir = tmp_path / "custom_readings"
+
+    plan = plan_topic_ingest(
+        topic_path=topic_path,
+        manifest_path=manifest_path,
+        readings_dir=override_dir,
+        force=False,
+    )
+
+    assert plan.readings_dir == override_dir
+    assert plan.to_read[0].output_json_path == override_dir / "sample.json"
+    assert plan.to_read[0].output_markdown_path == override_dir / "sample.reading.md"
+    assert plan.skipped_existing == []
+
+
+def test_write_topic_ingest_report_json_shape_and_path(tmp_path: Path) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    report = TopicIngestReport(
+        topic_id="utility_nav",
+        topic_name="Utility Navigation",
+        manifest_path="manifest.yaml",
+        readings_dir="papers",
+        total=2,
+        read=1,
+        skipped_existing=1,
+        failed=0,
+        artifacts=["papers/sample.json", "papers/sample.reading.md"],
+        metadata={"model": "reader-v1"},
+        update=IngestUpdateReport(
+            status="skipped",
+            report_path="state/update_report.json",
+        ),
+    )
+
+    report_path = write_topic_ingest_report(topic_dir, report)
+
+    assert report_path == topic_dir / "state" / "ingest_report.json"
+    assert report_path.read_text(encoding="utf-8").endswith("\n")
+    assert json.loads(report_path.read_text(encoding="utf-8")) == {
+        "artifacts": ["papers/sample.json", "papers/sample.reading.md"],
+        "failed": 0,
+        "manifest_path": "manifest.yaml",
+        "metadata": {"model": "reader-v1"},
+        "read": 1,
+        "readings_dir": "papers",
+        "skipped_existing": 1,
+        "topic_id": "utility_nav",
+        "topic_name": "Utility Navigation",
+        "total": 2,
+        "update": {
+            "report_path": "state/update_report.json",
+            "status": "skipped",
+        },
+    }
+    assert IngestUpdateReport(status="failed", error="boom").to_dict() == {
+        "status": "failed",
+        "error": "boom",
+    }

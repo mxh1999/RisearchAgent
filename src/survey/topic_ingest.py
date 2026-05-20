@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Union
@@ -7,6 +8,7 @@ from typing import Any, Union
 import yaml
 
 from src.reader.reading_renderer import validate_safe_paper_id
+from src.survey.models import TopicProfile
 
 MetadataValue = Union[int, str]
 
@@ -24,6 +26,75 @@ class IngestManifestEntry:
 class IngestManifest:
     manifest_path: Path
     papers: list[IngestManifestEntry]
+
+
+@dataclass(frozen=True)
+class PlannedIngestEntry:
+    paper_id: str
+    title: str
+    source_kind: str
+    source_path: Path
+    output_json_path: Path
+    output_markdown_path: Path
+    metadata: dict[str, MetadataValue] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TopicIngestPlan:
+    topic_path: Path
+    topic_dir: Path
+    topic: TopicProfile
+    manifest: IngestManifest
+    readings_dir: Path
+    to_read: list[PlannedIngestEntry]
+    skipped_existing: list[PlannedIngestEntry]
+
+
+@dataclass
+class IngestUpdateReport:
+    status: str
+    report_path: str | Path | None = None
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        raw: dict[str, Any] = {"status": self.status}
+        if self.report_path is not None:
+            raw["report_path"] = str(self.report_path)
+        if self.error:
+            raw["error"] = self.error
+        return raw
+
+
+@dataclass
+class TopicIngestReport:
+    topic_id: str
+    topic_name: str
+    manifest_path: str | Path
+    readings_dir: str | Path
+    total: int
+    read: int
+    skipped_existing: int
+    failed: int
+    artifacts: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    update: IngestUpdateReport = field(
+        default_factory=lambda: IngestUpdateReport(status="pending")
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "topic_id": self.topic_id,
+            "topic_name": self.topic_name,
+            "manifest_path": str(self.manifest_path),
+            "readings_dir": str(self.readings_dir),
+            "total": self.total,
+            "read": self.read,
+            "skipped_existing": self.skipped_existing,
+            "failed": self.failed,
+            "artifacts": list(self.artifacts),
+            "metadata": dict(self.metadata),
+            "update": self.update.to_dict(),
+        }
 
 
 def load_ingest_manifest(path: Path) -> IngestManifest:
@@ -50,6 +121,62 @@ def load_ingest_manifest(path: Path) -> IngestManifest:
         entries.append(_load_entry(paper, index, base_dir, seen_paper_ids))
 
     return IngestManifest(manifest_path=path, papers=entries)
+
+
+def plan_topic_ingest(
+    topic_path: Path,
+    manifest_path: Path,
+    readings_dir: Path | None,
+    force: bool,
+) -> TopicIngestPlan:
+    from src.survey.cli import _load_topic, _validate_topic_path
+
+    topic = _load_topic(topic_path)
+    topic_dir = topic_path.parent
+    _validate_topic_path(topic, topic_dir)
+    manifest = load_ingest_manifest(manifest_path)
+    resolved_readings_dir = (
+        readings_dir if readings_dir is not None else topic_dir / "papers"
+    )
+
+    to_read: list[PlannedIngestEntry] = []
+    skipped_existing: list[PlannedIngestEntry] = []
+    for paper in manifest.papers:
+        planned = PlannedIngestEntry(
+            paper_id=paper.paper_id,
+            title=paper.title,
+            source_kind=paper.source_kind,
+            source_path=paper.source_path,
+            output_json_path=resolved_readings_dir / f"{paper.paper_id}.json",
+            output_markdown_path=resolved_readings_dir
+            / f"{paper.paper_id}.reading.md",
+            metadata=dict(paper.metadata),
+        )
+        if planned.output_json_path.exists() and not force:
+            skipped_existing.append(planned)
+        else:
+            to_read.append(planned)
+
+    return TopicIngestPlan(
+        topic_path=topic_path,
+        topic_dir=topic_dir,
+        topic=topic,
+        manifest=manifest,
+        readings_dir=resolved_readings_dir,
+        to_read=to_read,
+        skipped_existing=skipped_existing,
+    )
+
+
+def write_topic_ingest_report(topic_dir: Path, report: TopicIngestReport) -> Path:
+    report_path = topic_dir / "state" / "ingest_report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
 
 
 def _load_entry(
