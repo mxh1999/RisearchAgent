@@ -76,13 +76,23 @@ def render_reading_markdown(package: PaperReadingPackage) -> str:
     lines.extend(["", "## Experiments", ""])
     lines.extend(
         _markdown_table(
-            ["Benchmark", "Setting", "Metric", "Method", "Value", "Direction", "Source"],
+            [
+                "Benchmark",
+                "Setting",
+                "Metric",
+                "Method",
+                "Result Kind",
+                "Value",
+                "Direction",
+                "Source",
+            ],
             [
                 [
                     record.benchmark,
                     record.setting,
                     record.metric,
                     record.method,
+                    record.result_kind,
                     f"{record.value:g}",
                     "higher is better" if record.higher_is_better else "lower is better",
                     f"p. {record.source.page}: {record.source.quote}",

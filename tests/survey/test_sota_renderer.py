@@ -13,21 +13,24 @@ def _record(
     record_id: str,
     method: str,
     value: float,
+    benchmark: str = "GOAT-Bench",
     setting: str = "val unseen",
     metric: str = "SPL",
     higher_is_better: bool = True,
+    result_kind: str = "main_task",
     quote: str = "A very long quote about the reported benchmark value that should be truncated in the table because the full text is too verbose for a SOTA row.",
 ) -> TopicSOTARecord:
     return TopicSOTARecord(
         record_id=record_id,
         paper_id=record_id.split("::", 1)[0],
         title="Paper Title",
-        benchmark="GOAT-Bench",
+        benchmark=benchmark,
         setting=setting,
         metric=metric,
         method=method,
         value=value,
         higher_is_better=higher_is_better,
+        result_kind=result_kind,
         source_page=8,
         source_section="Experiments",
         source_quote=quote,
@@ -130,3 +133,30 @@ def test_render_sota_markdown_warns_for_uncertain_groups_and_direction_conflict(
 
     assert "Warning: setting group confidence is medium" in markdown
     assert "Warning: mixed metric directions" in markdown
+
+
+def test_render_sota_markdown_separates_auxiliary_results_from_leaderboards() -> None:
+    markdown = render_sota_markdown(
+        [
+            _record(
+                "paper-1::GOAT-Bench::val unseen::SPL::NavMethod",
+                "NavMethod",
+                35.1,
+            ),
+            _record(
+                "paper-1::Map Completion Test Dataset::MP3D validation::IoU::NavMethod",
+                "NavMethod",
+                41.2,
+                benchmark="Map Completion Test Dataset",
+                setting="MP3D validation",
+                metric="IoU",
+                result_kind="auxiliary",
+            ),
+        ],
+        _registry(),
+    )
+
+    assert "### val unseen, standard protocol / SPL (higher is better)" in markdown
+    assert "## Auxiliary / Diagnostic Results" in markdown
+    assert "Map Completion Test Dataset" in markdown
+    assert "### MP3D validation / IoU" not in markdown

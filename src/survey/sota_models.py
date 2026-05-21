@@ -99,6 +99,7 @@ class TopicSOTARecord:
     source_section: str
     source_quote: str
     source_confidence: str
+    result_kind: str = "main_task"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -119,6 +120,7 @@ class TopicSOTARecord:
             source_section=str(raw["source_section"]),
             source_quote=str(raw["source_quote"]),
             source_confidence=str(raw["source_confidence"]),
+            result_kind=str(raw.get("result_kind", "main_task")),
         )
 
 
@@ -153,6 +155,10 @@ def collect_sota_records(
                     source_section=_normalize_text(experiment.source.section),
                     source_quote=_normalize_text(experiment.source.quote),
                     source_confidence=_normalize_text(experiment.source.confidence),
+                    result_kind=_normalize_text(
+                        experiment.result_kind,
+                        default="main_task",
+                    ),
                 )
             )
     return sort_sota_records(records)

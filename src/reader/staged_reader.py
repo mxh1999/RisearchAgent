@@ -171,9 +171,16 @@ def _schema_instructions(stage: str) -> str:
         ),
         "experiments": (
             "Return JSON with key experiments: list of objects with benchmark, "
-            "setting, metric, method, value, higher_is_better, source. Use \"N/A\" "
-            "for unknown string fields; do not use null. source must be an object "
-            "with text, page, section, quote, confidence. Do not use source_evidence."
+            "setting, metric, method, value, higher_is_better, result_kind, source. "
+            "Use \"N/A\" for unknown string fields; do not use null. result_kind must "
+            "be one of main_task, auxiliary, ablation, diagnostic. Use main_task only "
+            "for the paper's primary task leaderboard results; use auxiliary for "
+            "supporting tasks such as map completion; use ablation for ablation "
+            "tables; use diagnostic for analysis-only measurements. source must be "
+            "an object with text, page, section, quote, confidence. source.quote "
+            "should be the exact table row or nearby sentence containing the method, "
+            "metric, and value; if only a caption is available, set confidence low. "
+            "Do not use source_evidence."
         ),
         "topic_relation": (
             "Return JSON with key topic_relation containing relevance, concept_axes, "
@@ -264,6 +271,12 @@ def _parse_experiments(raw: Any) -> list[ExperimentRecord]:
         _require_boolish(
             _required(record, "higher_is_better", f"{path}.higher_is_better"),
             f"{path}.higher_is_better",
+        )
+        if record.get("result_kind") is None:
+            record["result_kind"] = "main_task"
+        _require_string(
+            _required(record, "result_kind", f"{path}.result_kind"),
+            f"{path}.result_kind",
         )
         source = _require_mapping(_required(record, "source", f"{path}.source"), f"{path}.source")
         _validate_evidence(source, f"{path}.source")

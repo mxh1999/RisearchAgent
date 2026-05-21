@@ -17,6 +17,31 @@ def render_sota_markdown(
     if not records:
         return "No experiment records have been extracted yet."
 
+    main_records = [
+        record for record in records if _is_main_result(record)
+    ]
+    auxiliary_records = [
+        record for record in records if not _is_main_result(record)
+    ]
+
+    lines = []
+    if main_records:
+        lines.extend(_render_main_leaderboards(main_records, registry))
+    else:
+        lines.append("No main-task SOTA records have been extracted yet.")
+
+    if auxiliary_records:
+        if lines:
+            lines.append("")
+        lines.extend(_render_auxiliary_records(auxiliary_records))
+
+    return "\n".join(lines).rstrip()
+
+
+def _render_main_leaderboards(
+    records: list[TopicSOTARecord],
+    registry: SettingGroupRegistry,
+) -> list[str]:
     group_by_raw = _group_lookup(registry)
     grouped: dict[tuple[str, str, str], list[TopicSOTARecord]] = defaultdict(list)
     group_for_key: dict[tuple[str, str, str], SettingGroup] = {}
@@ -29,7 +54,7 @@ def render_sota_markdown(
         grouped[key].append(record)
         group_for_key[key] = group
 
-    lines = []
+    lines: list[str] = []
     current_benchmark = None
     for key in sorted(grouped.keys(), key=lambda item: (item[0].lower(), item[1].lower(), item[2].lower())):
         benchmark, setting, metric = key
@@ -74,7 +99,40 @@ def render_sota_markdown(
                 )
             )
 
-    return "\n".join(lines).rstrip()
+    return lines
+
+
+def _render_auxiliary_records(records: list[TopicSOTARecord]) -> list[str]:
+    lines = [
+        "## Auxiliary / Diagnostic Results",
+        "",
+        "| Kind | Benchmark | Setting | Metric | Method | Value | Paper | Evidence |",
+        "|---|---|---|---|---|---:|---|---|",
+    ]
+    for record in sorted(
+        records,
+        key=lambda item: (
+            item.result_kind.lower(),
+            item.benchmark.lower(),
+            item.setting.lower(),
+            item.metric.lower(),
+            item.method.lower(),
+            item.paper_id.lower(),
+        ),
+    ):
+        lines.append(
+            "| {kind} | {benchmark} | {setting} | {metric} | {method} | {value} | `{paper}` | {evidence} |".format(
+                kind=_escape_cell(record.result_kind),
+                benchmark=_escape_cell(record.benchmark),
+                setting=_escape_cell(record.setting),
+                metric=_escape_cell(record.metric),
+                method=_escape_cell(record.method),
+                value=_format_value(record.value),
+                paper=_escape_cell(record.paper_id),
+                evidence=_escape_cell(_evidence_text(record)),
+            )
+        )
+    return lines
 
 
 def _group_lookup(
@@ -122,6 +180,10 @@ def _direction_label(records: list[TopicSOTARecord]) -> str:
 
 def _has_direction_conflict(records: list[TopicSOTARecord]) -> bool:
     return len({record.higher_is_better for record in records}) > 1
+
+
+def _is_main_result(record: TopicSOTARecord) -> bool:
+    return record.result_kind.strip().lower() == "main_task"
 
 
 def _evidence_text(record: TopicSOTARecord) -> str:

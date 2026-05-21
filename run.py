@@ -355,6 +355,31 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("crawl", help="Crawl ArXiv papers")
     subparsers.add_parser("filter", help="Filter papers by relevance")
 
+    pdf_parser = subparsers.add_parser("pdf", help="PDF inspection utilities")
+    pdf_subparsers = pdf_parser.add_subparsers(
+        dest="pdf_command",
+        help="PDF command to run",
+    )
+    pdf_subparsers.required = True
+    pdf_extract_parser = pdf_subparsers.add_parser(
+        "extract",
+        help="Extract normalized per-page text from a PDF",
+    )
+    pdf_extract_parser.add_argument(
+        "--pdf",
+        required=True,
+        help="Local PDF source path",
+    )
+    pdf_extract_parser.add_argument(
+        "--output",
+        help="Output text path. Prints to stdout when omitted.",
+    )
+    pdf_extract_parser.add_argument(
+        "--max-pages",
+        type=_positive_int,
+        help="Maximum number of pages to extract",
+    )
+
     read_parser = subparsers.add_parser("read", help="Deep-read a specific paper")
     read_parser.add_argument(
         "arxiv_id",
@@ -694,6 +719,12 @@ def main():
         from src.survey.topic_cli import run_topic_command
 
         run_topic_command(args)
+        return
+
+    if args.command == "pdf":
+        from src.reader.pdf_cli import run_pdf_command
+
+        run_pdf_command(args)
         return
 
     if args.command == "sota" and getattr(args, "sota_command", None) == "update":

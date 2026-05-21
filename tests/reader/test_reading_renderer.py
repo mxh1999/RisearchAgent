@@ -90,6 +90,15 @@ def test_render_reading_markdown_contains_core_sections() -> None:
     assert "Critical Assessment" in markdown
 
 
+def test_render_reading_markdown_includes_experiment_result_kind() -> None:
+    package = _reading_package()
+
+    markdown = render_reading_markdown(package)
+
+    assert "| Benchmark | Setting | Metric | Method | Result Kind | Value | Direction | Source |" in markdown
+    assert "| GOAT-Bench | val unseen | SPL | SampleNav | main_task | 35.1 | higher is better |" in markdown
+
+
 def test_write_reading_package_writes_json_and_markdown(tmp_path) -> None:
     package = _reading_package()
 

@@ -76,6 +76,7 @@ class FakeLLM:
         experiment_setting: Any = "val unseen",
         evidence_page: Any = 2,
         evidence_confidence: Any = "high",
+        experiment_result_kind: Any = "main_task",
         topic_relevance: Any = "core",
         topic_concept_axes: Any = _DEFAULT_TOPIC_CONCEPT_AXES,
     ) -> None:
@@ -97,6 +98,7 @@ class FakeLLM:
         self.experiment_setting = experiment_setting
         self.evidence_page = evidence_page
         self.evidence_confidence = evidence_confidence
+        self.experiment_result_kind = experiment_result_kind
         self.topic_relevance = topic_relevance
         self.topic_concept_axes = (
             ["task_conditioned_utility"]
@@ -161,6 +163,7 @@ class FakeLLM:
                     "method": "UtilityNav",
                     "value": self.experiment_value,
                     "higher_is_better": self.higher_is_better,
+                    "result_kind": self.experiment_result_kind,
                     "source": source,
                 }
             ]
@@ -230,6 +233,8 @@ async def test_staged_reader_builds_package() -> None:
     assert "source must be an object with text, page, section, quote, confidence" in (
         experiments_prompt
     )
+    assert "result_kind" in experiments_prompt
+    assert "table row or nearby sentence" in experiments_prompt
     assert "Do not use source_evidence." in experiments_prompt
     topic_relation_prompt = llm.prompts[STAGES.index("topic_relation")]
     assert (
@@ -522,3 +527,22 @@ async def test_staged_reader_rejects_missing_experiment_source_quote() -> None:
             pages=pages,
             topic=_topic_profile(),
         )
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_accepts_auxiliary_experiment_kind() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(
+        llm=FakeLLM(experiment_result_kind="auxiliary"),
+        model="test-model",
+    )
+
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=_topic_profile(),
+    )
+
+    assert package.experiments[0].result_kind == "auxiliary"

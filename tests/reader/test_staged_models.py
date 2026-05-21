@@ -58,6 +58,7 @@ def test_reading_package_round_trip() -> None:
                 method="SampleNav",
                 value=35.1,
                 higher_is_better=True,
+                result_kind="main_task",
                 source=Evidence(
                     text="SPL result",
                     page=8,
@@ -103,6 +104,31 @@ def test_experiment_record_from_dict_preserves_false_metric_direction() -> None:
     restored = ExperimentRecord.from_dict(raw)
 
     assert restored.higher_is_better is False
+    assert restored.result_kind == "main_task"
+
+
+def test_experiment_record_round_trip_preserves_result_kind() -> None:
+    raw = {
+        "benchmark": "Map Completion Test Dataset",
+        "setting": "MP3D validation",
+        "metric": "IoU",
+        "method": "SampleNav",
+        "value": 41.2,
+        "higher_is_better": True,
+        "result_kind": "auxiliary",
+        "source": {
+            "text": "Map completion result",
+            "page": 8,
+            "section": "Experiments",
+            "quote": "SampleNav obtains 41.2 IoU.",
+            "confidence": "high",
+        },
+    }
+
+    restored = ExperimentRecord.from_dict(raw)
+
+    assert restored.result_kind == "auxiliary"
+    assert restored.to_dict()["result_kind"] == "auxiliary"
 
 
 def test_experiment_record_from_dict_parses_false_string_metric_direction() -> None:

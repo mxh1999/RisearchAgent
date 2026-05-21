@@ -47,6 +47,7 @@ def _experiment(
     method: str,
     value: float,
     higher_is_better: bool = True,
+    result_kind: str = "main_task",
 ) -> ExperimentRecord:
     return ExperimentRecord(
         benchmark=benchmark,
@@ -55,6 +56,7 @@ def _experiment(
         method=method,
         value=value,
         higher_is_better=higher_is_better,
+        result_kind=result_kind,
         source=_evidence(f"{method} obtains {value} {metric}."),
     )
 
@@ -186,6 +188,30 @@ def test_records_jsonl_round_trip_preserves_evidence() -> None:
 
     assert restored == records
     assert restored[0].source_quote == "SampleNav obtains 35.1 SPL."
+
+
+def test_collect_sota_records_preserves_auxiliary_result_kind() -> None:
+    records = collect_sota_records(
+        [
+            _package(
+                "paper-1",
+                "Paper One",
+                [
+                    _experiment(
+                        "Map Completion Test Dataset",
+                        "MP3D validation",
+                        "IoU",
+                        "SampleNav",
+                        41.2,
+                        result_kind="auxiliary",
+                    )
+                ],
+            )
+        ]
+    )
+
+    assert records[0].result_kind == "auxiliary"
+    assert records_from_jsonl(records_to_jsonl(records))[0].result_kind == "auxiliary"
 
 
 def test_setting_registry_json_round_trip() -> None:

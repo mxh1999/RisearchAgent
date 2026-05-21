@@ -107,6 +107,7 @@ class ExperimentRecord:
     value: float
     higher_is_better: bool
     source: Evidence
+    result_kind: str = "main_task"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -121,6 +122,7 @@ class ExperimentRecord:
             value=float(raw["value"]),
             higher_is_better=_parse_bool(raw["higher_is_better"]),
             source=Evidence.from_dict(raw["source"]),
+            result_kind=str(raw.get("result_kind", "main_task")),
         )
 
 
