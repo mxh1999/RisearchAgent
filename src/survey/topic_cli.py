@@ -79,6 +79,16 @@ def _build_llm(config_path: str, purpose: str):
 
 
 def run_topic_command(args) -> None:
+    if args.topic_command == "screen":
+        from src.survey.relevance_cli import run_topic_screen
+
+        run_topic_screen(args)
+        return
+    if args.topic_command == "validate":
+        from src.survey.relevance_cli import run_topic_validate
+
+        run_topic_validate(args)
+        return
     if args.topic_command == "discover":
         from src.survey.discover_cli import run_topic_discover
 

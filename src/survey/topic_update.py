@@ -133,6 +133,7 @@ def load_topic_update_context(
         packages = load_reading_packages(source_dir)
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(f"Error loading reading packages: {exc}") from exc
+    packages = _apply_relevance_validations(topic_dir, packages)
     registry = _load_registry(topic_dir / "state" / "sota_setting_groups.json")
     records = collect_sota_records(packages)
     return LoadedTopicUpdateContext(
@@ -145,6 +146,21 @@ def load_topic_update_context(
         sota_records=records,
         sota_needs_llm=has_unmatched_raw_settings(records, registry),
     )
+
+
+def _apply_relevance_validations(
+    topic_dir: Path,
+    packages: list[PaperReadingPackage],
+) -> list[PaperReadingPackage]:
+    from src.survey.relevance import load_validation_inclusions
+
+    try:
+        inclusions = load_validation_inclusions(topic_dir)
+    except ValueError as exc:
+        raise SystemExit(f"Error loading relevance validations: {exc}") from exc
+    if not inclusions:
+        return packages
+    return [package for package in packages if inclusions.get(package.paper_id, True)]
 
 
 def write_topic_update_report(topic_dir: Path, report: TopicUpdateReport) -> Path:

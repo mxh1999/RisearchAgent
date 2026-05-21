@@ -84,6 +84,13 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _threshold(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0 or parsed > 1.0:
+        raise argparse.ArgumentTypeError("must be in (0, 1]")
+    return parsed
+
+
 def create_orchestrator(config):
     from src.pipeline.orchestrator import PipelineOrchestrator
 
@@ -495,6 +502,72 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-llm-normalize",
         action="store_true",
         help="Use conservative exact SOTA setting grouping without LLM canonicalization",
+    )
+    topic_screen_parser = topic_subparsers.add_parser(
+        "screen",
+        help="Screen discovered candidates for topic relevance before download",
+    )
+    topic_screen_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_screen_parser.add_argument(
+        "--candidates",
+        help="Path to discovery_candidates.json",
+    )
+    topic_screen_parser.add_argument(
+        "--threshold",
+        type=_threshold,
+        default=0.6,
+        help="Minimum relevance score for accepted candidates",
+    )
+    topic_screen_parser.add_argument(
+        "--limit",
+        type=_positive_int,
+        help="Maximum number of candidates to screen",
+    )
+    topic_screen_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write only the screening report without mutating discovery artifacts",
+    )
+    topic_screen_parser.add_argument(
+        "--model",
+        help="Override the configured filter model",
+    )
+    topic_validate_parser = topic_subparsers.add_parser(
+        "validate",
+        help="Validate read papers for topic relevance before update",
+    )
+    topic_validate_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_validate_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+    topic_validate_parser.add_argument(
+        "--threshold",
+        type=_threshold,
+        default=0.6,
+        help="Minimum relevance score for included reading packages",
+    )
+    topic_validate_parser.add_argument(
+        "--limit",
+        type=_positive_int,
+        help="Maximum number of reading packages to validate",
+    )
+    topic_validate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write only the validation report without changing update filtering state",
+    )
+    topic_validate_parser.add_argument(
+        "--model",
+        help="Override the configured filter model",
     )
     topic_download_parser = topic_subparsers.add_parser(
         "download",
