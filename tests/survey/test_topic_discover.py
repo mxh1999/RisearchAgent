@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from run import build_parser
-from src.survey.arxiv_provider import convert_arxiv_result
+from src.survey.arxiv_provider import ArxivRateLimitError, convert_arxiv_result
 from src.survey.models import TopicProfile, TopicQuery
 from src.survey.topic_discover import (
     RawDiscoveryPaper,
@@ -43,6 +43,71 @@ class FakeDiscoveryProvider:
         if self.fail:
             raise RuntimeError("provider failed")
         return list(self.papers_by_query.get(query_name, []))
+
+
+class FakeRateLimitProvider:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def search(
+        self,
+        query: str,
+        query_name: str,
+        query_purpose: str,
+        max_results: int,
+        sort: str,
+    ) -> list[RawDiscoveryPaper]:
+        self.calls.append(query_name)
+        raise ArxivRateLimitError(
+            query_name=query_name,
+            status=429,
+            attempts=4,
+            message="arXiv API rate limited query direct after 4 attempts",
+        )
+
+
+class FakeArxivClient:
+    def __init__(self, fail_statuses: list[int] | None = None) -> None:
+        self.page_size = 100
+        self.delay_seconds = 3.0
+        self.num_retries = 3
+        self.fail_statuses = fail_statuses or []
+        self.calls: list[dict[str, object]] = []
+
+    def results(self, search):
+        import arxiv
+
+        self.calls.append(
+            {
+                "page_size": self.page_size,
+                "max_results": search.max_results,
+                "query": search.query,
+            }
+        )
+        if self.fail_statuses:
+            raise arxiv.HTTPError(
+                "https://export.arxiv.org/api/query?search_query=test",
+                0,
+                self.fail_statuses.pop(0),
+            )
+        return [
+            SimpleNamespace(
+                entry_id="https://arxiv.org/abs/2605.00001v1",
+                title="Useful Navigation Paper",
+                summary="Embodied navigation with utility.",
+                authors=[SimpleNamespace(name="A. Researcher")],
+                published=datetime(2026, 5, 1, tzinfo=timezone.utc),
+                categories=["cs.RO"],
+            )
+        ]
+
+
+class FakeSleep:
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
 
 
 def _topic() -> TopicProfile:
@@ -288,6 +353,37 @@ def test_cmd_topic_discover_provider_failure_writes_no_partial_artifacts(
     assert not (topic_dir / "ingest_manifest.draft.yaml").exists()
 
 
+def test_cmd_topic_discover_rate_limit_writes_error_report_without_artifacts(
+    tmp_path: Path,
+) -> None:
+    from src.survey.discover_cli import cmd_topic_discover
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic_yaml(topic_dir)
+    provider = FakeRateLimitProvider()
+    args = SimpleNamespace(
+        topic=str(topic_path),
+        max_results_per_query=5,
+        sort="submitted",
+        days_lookback=30,
+        include_existing=False,
+    )
+
+    with pytest.raises(SystemExit, match="arXiv API rate limited"):
+        asyncio.run(cmd_topic_discover(args, provider=provider))
+
+    error_path = topic_dir / "state" / "discovery_error.json"
+    error = json.loads(error_path.read_text(encoding="utf-8"))
+    assert provider.calls == ["direct"]
+    assert error["topic_id"] == "utility_nav"
+    assert error["failed_query"] == "direct"
+    assert error["status"] == 429
+    assert error["attempts"] == 4
+    assert not (topic_dir / "state" / "discovery_candidates.json").exists()
+    assert not (topic_dir / "discovery.md").exists()
+    assert not (topic_dir / "ingest_manifest.draft.yaml").exists()
+
+
 def test_cmd_topic_discover_rejects_topic_id_mismatch_before_provider(
     tmp_path: Path,
 ) -> None:
@@ -308,6 +404,91 @@ def test_cmd_topic_discover_rejects_topic_id_mismatch_before_provider(
         asyncio.run(cmd_topic_discover(args, provider=provider))
 
     assert provider.calls == []
+
+
+def test_arxiv_provider_uses_small_page_size_and_conservative_delay() -> None:
+    from src.survey.arxiv_provider import ArxivDiscoveryProvider
+
+    provider = ArxivDiscoveryProvider()
+
+    assert provider.client.page_size == 10
+    assert provider.client.delay_seconds == 5.0
+    assert provider.client.num_retries == 0
+
+
+def test_arxiv_provider_caps_page_size_to_requested_results() -> None:
+    from src.survey.arxiv_provider import ArxivDiscoveryProvider
+
+    client = FakeArxivClient()
+    provider = ArxivDiscoveryProvider(client=client, sleep=FakeSleep())
+
+    results = asyncio.run(
+        provider.search(
+            query="test",
+            query_name="direct",
+            query_purpose="Direct query.",
+            max_results=1,
+            sort="submitted",
+        )
+    )
+
+    assert len(results) == 1
+    assert client.calls[0]["page_size"] == 1
+    assert client.calls[0]["max_results"] == 1
+
+
+def test_arxiv_provider_backs_off_on_rate_limit_before_retry() -> None:
+    from src.survey.arxiv_provider import ArxivDiscoveryProvider
+
+    client = FakeArxivClient(fail_statuses=[429])
+    sleep = FakeSleep()
+    provider = ArxivDiscoveryProvider(
+        client=client,
+        sleep=sleep,
+        rate_limit_backoff_seconds=(30.0, 60.0),
+    )
+
+    results = asyncio.run(
+        provider.search(
+            query="test",
+            query_name="direct",
+            query_purpose="Direct query.",
+            max_results=1,
+            sort="submitted",
+        )
+    )
+
+    assert len(results) == 1
+    assert sleep.calls == [30.0]
+    assert len(client.calls) == 2
+
+
+def test_arxiv_provider_raises_clean_rate_limit_error_after_backoff_exhausted() -> None:
+    from src.survey.arxiv_provider import ArxivDiscoveryProvider
+
+    client = FakeArxivClient(fail_statuses=[429, 503, 429])
+    sleep = FakeSleep()
+    provider = ArxivDiscoveryProvider(
+        client=client,
+        sleep=sleep,
+        rate_limit_backoff_seconds=(30.0, 60.0),
+    )
+
+    with pytest.raises(ArxivRateLimitError) as exc_info:
+        asyncio.run(
+            provider.search(
+                query="test",
+                query_name="direct",
+                query_purpose="Direct query.",
+                max_results=1,
+                sort="submitted",
+            )
+        )
+
+    assert exc_info.value.query_name == "direct"
+    assert exc_info.value.status == 429
+    assert exc_info.value.attempts == 3
+    assert sleep.calls == [30.0, 60.0]
 
 
 def test_convert_arxiv_result_to_raw_discovery_paper() -> None:

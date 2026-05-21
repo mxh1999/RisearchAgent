@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from src.survey.arxiv_provider import ArxivDiscoveryProvider
+from src.survey.arxiv_provider import ArxivDiscoveryProvider, ArxivRateLimitError
 from src.survey.cli import _load_topic, _validate_topic_path
 from src.survey.topic_discover import (
     DiscoveryReport,
@@ -28,13 +29,17 @@ async def cmd_topic_discover(args, provider=None) -> DiscoveryReport:
     raw_papers: list[RawDiscoveryPaper] = []
 
     for query in topic.search_queries:
-        results = await discovery_provider.search(
-            query.query,
-            query.name,
-            query.purpose,
-            args.max_results_per_query,
-            args.sort,
-        )
+        try:
+            results = await discovery_provider.search(
+                query.query,
+                query.name,
+                query.purpose,
+                args.max_results_per_query,
+                args.sort,
+            )
+        except ArxivRateLimitError as exc:
+            _write_discovery_error(topic_dir, topic, exc)
+            raise SystemExit(str(exc)) from exc
         raw_papers.extend(
             paper
             for paper in results
@@ -61,6 +66,25 @@ async def cmd_topic_discover(args, provider=None) -> DiscoveryReport:
 
 def run_topic_discover(args) -> None:
     asyncio.run(cmd_topic_discover(args))
+
+
+def _write_discovery_error(topic_dir: Path, topic, error: ArxivRateLimitError) -> Path:
+    path = topic_dir / "state" / "discovery_error.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "topic_id": topic.topic_id,
+        "topic_name": topic.name,
+        "error_type": "arxiv_rate_limit",
+        "message": str(error),
+        "failed_query": error.query_name,
+        "status": error.status,
+        "attempts": error.attempts,
+    }
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _as_utc(value: datetime) -> datetime:
