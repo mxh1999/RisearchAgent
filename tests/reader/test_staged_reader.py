@@ -79,6 +79,7 @@ class FakeLLM:
         experiment_result_kind: Any = "main_task",
         topic_relevance: Any = "core",
         topic_concept_axes: Any = _DEFAULT_TOPIC_CONCEPT_AXES,
+        topic_relation_response: Any = None,
     ) -> None:
         self.malformed_summary = malformed_summary
         self.experiment_value = experiment_value
@@ -105,6 +106,7 @@ class FakeLLM:
             if topic_concept_axes is _DEFAULT_TOPIC_CONCEPT_AXES
             else topic_concept_axes
         )
+        self.topic_relation_response = topic_relation_response
         self.prompts: list[str] = []
         self.calls: list[tuple[Optional[str], Optional[float]]] = []
 
@@ -171,6 +173,8 @@ class FakeLLM:
                 return experiments
             return {"experiments": experiments}
         if stage == "topic_relation":
+            if self.topic_relation_response is not None:
+                return {"topic_relation": self.topic_relation_response}
             return {
                 "topic_relation": {
                     "relevance": self.topic_relevance,
@@ -509,6 +513,34 @@ async def test_staged_reader_coerces_topic_relation_text_drift() -> None:
     assert package.topic_relation.relevance == (
         '{"level": "adjacent", "reason": "2D value map"}'
     )
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_coerces_topic_relation_root_text_drift() -> None:
+    title, pages = _pages()
+    reader = StagedPaperReader(
+        llm=FakeLLM(
+            topic_relation_response="adjacent: semantic navigation without learned utility"
+        ),
+        model="test-model",
+    )
+
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=None,
+    )
+
+    assert package.topic_relation is not None
+    assert (
+        package.topic_relation.relevance
+        == "adjacent: semantic navigation without learned utility"
+    )
+    assert package.topic_relation.concept_axes == []
+    assert package.topic_relation.collision_risk == "unknown"
+    assert package.topic_relation.differentiation == ""
 
 
 @pytest.mark.asyncio

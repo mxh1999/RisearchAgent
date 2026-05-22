@@ -286,12 +286,10 @@ def _parse_experiments(raw: Any) -> list[ExperimentRecord]:
 
 def _parse_topic_relation(raw: Any) -> TopicRelation:
     root = _require_mapping(raw, "topic_relation_response")
-    relation = dict(
-        _require_mapping(
-            _required(root, "topic_relation", "topic_relation"),
-            "topic_relation",
-        )
-    )
+    relation_raw = _required(root, "topic_relation", "topic_relation")
+    if not isinstance(relation_raw, Mapping):
+        relation_raw = {"relevance": _coerce_text(relation_raw)}
+    relation = dict(relation_raw)
     if relation.get("relevance") is None:
         relation["relevance"] = "unknown"
     if relation.get("collision_risk") is None:
