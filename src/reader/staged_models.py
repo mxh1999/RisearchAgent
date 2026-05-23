@@ -37,6 +37,32 @@ class PageText:
 
 
 @dataclass(frozen=True)
+class SourceTable:
+    table_id: str
+    caption: str
+    label: str
+    section: str
+    latex: str
+    markdown: str
+    source_path: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "SourceTable":
+        return cls(
+            table_id=str(raw["table_id"]),
+            caption=str(raw.get("caption", "")),
+            label=str(raw.get("label", "")),
+            section=str(raw.get("section", "")),
+            latex=str(raw.get("latex", "")),
+            markdown=str(raw.get("markdown", "")),
+            source_path=str(raw.get("source_path", "")),
+        )
+
+
+@dataclass(frozen=True)
 class Evidence:
     text: str
     page: int
@@ -152,6 +178,7 @@ class PaperReadingPackage:
     title: str
     source_path: str
     pages: list[PageText] = field(default_factory=list)
+    source_tables: list[SourceTable] = field(default_factory=list)
     summary: Optional[PaperSummary] = None
     claims: list[Evidence] = field(default_factory=list)
     method_modules: list[MethodModule] = field(default_factory=list)
@@ -166,6 +193,7 @@ class PaperReadingPackage:
             "title": self.title,
             "source_path": self.source_path,
             "pages": [page.to_dict() for page in self.pages],
+            "source_tables": [table.to_dict() for table in self.source_tables],
             "summary": self.summary.to_dict() if self.summary else None,
             "claims": [claim.to_dict() for claim in self.claims],
             "method_modules": [module.to_dict() for module in self.method_modules],
@@ -184,6 +212,10 @@ class PaperReadingPackage:
             title=str(raw["title"]),
             source_path=str(raw["source_path"]),
             pages=[PageText.from_dict(item) for item in raw.get("pages", [])],
+            source_tables=[
+                SourceTable.from_dict(item)
+                for item in raw.get("source_tables", [])
+            ],
             summary=PaperSummary.from_dict(summary_raw) if summary_raw else None,
             claims=[Evidence.from_dict(item) for item in raw.get("claims", [])],
             method_modules=[

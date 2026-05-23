@@ -22,6 +22,7 @@ class FakeStagedReader:
         source_path,
         pages,
         topic,
+        source_tables=None,
     ) -> PaperReadingPackage:
         self.calls.append(
             {
@@ -30,6 +31,7 @@ class FakeStagedReader:
                 "source_path": source_path,
                 "pages": pages,
                 "topic": topic,
+                "source_tables": source_tables or [],
             }
         )
         return PaperReadingPackage(
@@ -37,6 +39,7 @@ class FakeStagedReader:
             title=title,
             source_path=source_path,
             pages=pages,
+            source_tables=source_tables or [],
         )
 
 

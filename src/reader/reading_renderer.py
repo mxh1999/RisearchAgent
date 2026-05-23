@@ -31,6 +31,7 @@ def render_reading_markdown(package: PaperReadingPackage) -> str:
                 ["Paper ID", package.paper_id],
                 ["Source Path", package.source_path],
                 ["Pages", str(len(package.pages))],
+                ["Source Tables", str(len(package.source_tables))],
             ],
         )
     )

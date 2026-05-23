@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 import yaml
 
@@ -31,6 +32,7 @@ class DownloadOutcome:
     pdf_path: Path
     source_url: str
     year: int | None
+    source_archive_path: Path | None = None
 
 
 @dataclass
@@ -41,6 +43,9 @@ class DownloadReport:
     manifest_path: Path
     downloaded: list[DownloadOutcome]
     reused: list[DownloadOutcome]
+    source_downloaded: list[str]
+    source_reused: list[str]
+    source_failed: list[dict[str, str]]
     skipped: list[dict[str, str]]
     failed: list[dict[str, str]]
 
@@ -52,6 +57,9 @@ class DownloadReport:
             "manifest_path": str(self.manifest_path),
             "downloaded": [outcome.paper_id for outcome in self.downloaded],
             "reused": [outcome.paper_id for outcome in self.reused],
+            "source_downloaded": list(self.source_downloaded),
+            "source_reused": list(self.source_reused),
+            "source_failed": [dict(item) for item in self.source_failed],
             "skipped": [dict(item) for item in self.skipped],
             "failed": [dict(item) for item in self.failed],
             "total_materialized": len(self.downloaded) + len(self.reused),
@@ -66,6 +74,22 @@ async def default_download_pdf(pdf_url: str, target_path: Path) -> None:
         content = await loop.run_in_executor(None, _download_bytes, pdf_url)
         if not content:
             raise ValueError(f"Empty PDF response: {pdf_url}")
+        tmp_path.write_bytes(content)
+        tmp_path.replace(target_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
+async def default_download_source(source_url: str, target_path: Path) -> None:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target_path.with_name(f"{target_path.name}.tmp")
+    try:
+        loop = asyncio.get_running_loop()
+        content = await loop.run_in_executor(None, _download_bytes, source_url)
+        if not content:
+            raise ValueError(f"Empty source response: {source_url}")
         tmp_path.write_bytes(content)
         tmp_path.replace(target_path)
     except Exception:
@@ -122,6 +146,7 @@ async def materialize_topic_downloads(
     include_existing: bool,
     force: bool,
     download_one: DownloadOne | None = None,
+    download_source: DownloadOne | None = None,
 ) -> DownloadReport:
     topic = _load_topic(topic_path)
     topic_dir = topic_path.parent
@@ -150,22 +175,42 @@ async def materialize_topic_downloads(
         selected.append(candidate)
 
     pdf_dir = topic_dir / "pdfs"
+    source_dir = topic_dir / "sources"
     downloader = download_one or default_download_pdf
+    source_downloader = (
+        download_source
+        if download_source is not None
+        else default_download_source if download_one is None else None
+    )
     downloaded: list[DownloadOutcome] = []
     reused: list[DownloadOutcome] = []
     materialized: list[DownloadOutcome] = []
+    source_downloaded: list[str] = []
+    source_reused: list[str] = []
+    source_failed: list[dict[str, str]] = []
     failed: list[dict[str, str]] = []
 
     for candidate in selected:
         pdf_path = pdf_dir / f"{candidate.paper_id}.pdf"
+        source_archive_path = source_dir / f"{candidate.paper_id}.tar.gz"
         outcome = DownloadOutcome(
             paper_id=candidate.paper_id,
             title=candidate.title,
             pdf_path=pdf_path,
             source_url=candidate.source_url,
             year=candidate.year,
+            source_archive_path=source_archive_path,
         )
         if pdf_path.exists() and not force:
+            await _materialize_source_archive(
+                candidate=candidate,
+                source_archive_path=source_archive_path,
+                force=force,
+                source_downloader=source_downloader,
+                source_downloaded=source_downloaded,
+                source_reused=source_reused,
+                source_failed=source_failed,
+            )
             reused.append(outcome)
             materialized.append(outcome)
             continue
@@ -175,6 +220,15 @@ async def materialize_topic_downloads(
         except Exception as exc:
             failed.append({"paper_id": candidate.paper_id, "error": str(exc)})
             continue
+        await _materialize_source_archive(
+            candidate=candidate,
+            source_archive_path=source_archive_path,
+            force=force,
+            source_downloader=source_downloader,
+            source_downloaded=source_downloaded,
+            source_reused=source_reused,
+            source_failed=source_failed,
+        )
         downloaded.append(outcome)
         materialized.append(outcome)
 
@@ -186,6 +240,9 @@ async def materialize_topic_downloads(
         manifest_path=manifest_path,
         downloaded=downloaded,
         reused=reused,
+        source_downloaded=source_downloaded,
+        source_reused=source_reused,
+        source_failed=source_failed,
         skipped=skipped,
         failed=failed,
     )
@@ -248,7 +305,46 @@ def _manifest_entry(manifest_path: Path, outcome: DownloadOutcome) -> dict[str, 
     }
     if outcome.year is not None:
         entry["year"] = outcome.year
+    if outcome.source_archive_path is not None and outcome.source_archive_path.exists():
+        entry["source_archive"] = _relative_path(
+            outcome.source_archive_path,
+            manifest_path.parent,
+        )
     return entry
+
+
+async def _materialize_source_archive(
+    *,
+    candidate: DownloadCandidate,
+    source_archive_path: Path,
+    force: bool,
+    source_downloader: DownloadOne | None,
+    source_downloaded: list[str],
+    source_reused: list[str],
+    source_failed: list[dict[str, str]],
+) -> None:
+    if source_downloader is None:
+        return
+    if source_archive_path.exists() and not force:
+        source_reused.append(candidate.paper_id)
+        return
+    source_url = _source_archive_url(candidate)
+    try:
+        source_archive_path.parent.mkdir(parents=True, exist_ok=True)
+        await source_downloader(source_url, source_archive_path)
+    except Exception as exc:
+        source_failed.append({"paper_id": candidate.paper_id, "error": str(exc)})
+        return
+    source_downloaded.append(candidate.paper_id)
+
+
+def _source_archive_url(candidate: DownloadCandidate) -> str:
+    parsed = urlparse(candidate.source_url)
+    if parsed.netloc.endswith("arxiv.org") and parsed.path.startswith("/abs/"):
+        arxiv_id = parsed.path[len("/abs/"):].strip("/")
+        if arxiv_id:
+            return f"https://arxiv.org/e-print/{arxiv_id}"
+    return f"https://arxiv.org/e-print/{candidate.paper_id}"
 
 
 def _relative_path(path: Path, base_dir: Path) -> str:

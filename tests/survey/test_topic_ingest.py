@@ -71,6 +71,7 @@ class FakeReadService:
         title: str,
         source_path: Path,
         source_kind: str,
+        source_archive_path: Path | None = None,
         output_dir: Path,
         topic: object,
     ) -> tuple[Path, Path]:
@@ -80,6 +81,7 @@ class FakeReadService:
                 "title": title,
                 "source_path": source_path,
                 "source_kind": source_kind,
+                "source_archive_path": source_archive_path,
                 "output_dir": output_dir,
                 "topic": topic,
             }
@@ -171,10 +173,35 @@ def test_load_ingest_manifest_returns_entries_with_resolved_sources_and_metadata
         "source_url": "https://example.com/paper",
         "notes": "Strong baseline.",
     }
+    assert manifest.papers[0].source_archive_path is None
     assert manifest.papers[1].title == "Sample Text"
     assert manifest.papers[1].source_kind == "text_file"
     assert manifest.papers[1].source_path == text_path.resolve()
+    assert manifest.papers[1].source_archive_path is None
     assert manifest.papers[1].metadata == {}
+
+
+def test_load_ingest_manifest_accepts_optional_source_archive(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "papers" / "sample.pdf"
+    source_archive_path = tmp_path / "sources" / "sample.tar.gz"
+    pdf_path.parent.mkdir()
+    source_archive_path.parent.mkdir()
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    source_archive_path.write_bytes(b"source archive")
+    manifest_path = _write_manifest(
+        tmp_path,
+        """
+        papers:
+          - paper_id: sample_pdf
+            title: Sample PDF
+            pdf: papers/sample.pdf
+            source_archive: sources/sample.tar.gz
+        """,
+    )
+
+    manifest = load_ingest_manifest(manifest_path)
+
+    assert manifest.papers[0].source_archive_path == source_archive_path.resolve()
 
 
 @pytest.mark.parametrize(
@@ -574,6 +601,7 @@ def test_ingest_topic_papers_reads_missing_paper_writes_report_and_preserves_top
         "title": "Sample Paper",
         "source_path": (topic_dir / "sources" / "sample.txt").resolve(),
         "source_kind": "text_file",
+        "source_archive_path": None,
         "output_dir": topic_dir / "papers",
     }
     assert getattr(topic, "topic_id") == "utility_nav"
@@ -625,6 +653,45 @@ def test_ingest_topic_papers_skips_existing_and_updates_with_forwarded_options(
     assert json.loads(
         (topic_dir / "state" / "ingest_report.json").read_text(encoding="utf-8")
     ) == report.to_dict()
+
+
+def test_ingest_topic_papers_forwards_source_archive_to_read_service(
+    tmp_path: Path,
+) -> None:
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    pdf_path = topic_dir / "pdfs" / "sample.pdf"
+    source_archive_path = topic_dir / "sources" / "sample.tar.gz"
+    pdf_path.parent.mkdir()
+    source_archive_path.parent.mkdir()
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    source_archive_path.write_bytes(b"source archive")
+    manifest_path = _write_manifest(
+        topic_dir,
+        """
+        papers:
+          - paper_id: sample
+            title: Sample Paper
+            pdf: pdfs/sample.pdf
+            source_archive: sources/sample.tar.gz
+        """,
+    )
+    read_service = FakeReadService()
+
+    asyncio.run(
+        ingest_topic_papers(
+            topic_path=topic_path,
+            manifest_path=manifest_path,
+            readings_dir=None,
+            force=False,
+            update=False,
+            no_llm_normalize=False,
+            read_service=read_service,
+            update_service=None,
+        )
+    )
+
+    assert read_service.calls[0]["source_archive_path"] == source_archive_path.resolve()
 
 
 def test_ingest_topic_papers_failed_read_writes_failed_report_and_reraises(

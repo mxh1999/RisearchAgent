@@ -9,6 +9,7 @@ import yaml
 from dotenv import load_dotenv
 
 from src.config import LLMConfig, load_config
+from src.reader.latex_source_extractor import extract_tables_from_latex_source
 from src.reader.page_extractor import extract_pages_from_pdf, extract_pages_from_text_file
 from src.reader.reading_renderer import validate_safe_paper_id, write_reading_package
 from src.reader.staged_reader import StagedPaperReader
@@ -23,6 +24,7 @@ async def read_staged_source(
     source_kind: str,
     output_dir: Path,
     topic: Optional[TopicProfile],
+    source_archive_path: Path | None = None,
 ) -> tuple[Path, Path]:
     try:
         validate_safe_paper_id(paper_id)
@@ -36,12 +38,20 @@ async def read_staged_source(
     else:
         raise ValueError(f"Unknown source_kind: {source_kind}")
 
+    source_tables = []
+    if source_archive_path is not None and source_archive_path.exists():
+        try:
+            source_tables = extract_tables_from_latex_source(source_archive_path)
+        except Exception:
+            source_tables = []
+
     package = await reader.read(
         paper_id=paper_id,
         title=title,
         source_path=str(source_path),
         pages=pages,
         topic=topic,
+        source_tables=source_tables,
     )
     return write_reading_package(package, output_dir)
 

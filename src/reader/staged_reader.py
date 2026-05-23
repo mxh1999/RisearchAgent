@@ -11,6 +11,7 @@ from src.reader.staged_models import (
     PageText,
     PaperReadingPackage,
     PaperSummary,
+    SourceTable,
     TopicRelation,
 )
 from src.survey.models import TopicProfile
@@ -41,14 +42,17 @@ class StagedPaperReader:
         source_path: str,
         pages: Sequence[PageText],
         topic: Optional[TopicProfile] = None,
+        source_tables: Optional[Sequence[SourceTable]] = None,
     ) -> PaperReadingPackage:
         topic_context = _topic_to_prompt_text(topic)
+        table_context = _source_tables_to_prompt_text(source_tables or [])
         summary = _parse_summary(
             await self._generate(
                 stage="summary",
                 title=title,
                 topic_context=topic_context,
                 pages=pages,
+                table_context=table_context,
             )
         )
         claims, critique, follow_up_questions = _parse_section_notes(
@@ -57,6 +61,7 @@ class StagedPaperReader:
                 title=title,
                 topic_context=topic_context,
                 pages=pages,
+                table_context=table_context,
             )
         )
         method_modules = _parse_method(
@@ -65,6 +70,7 @@ class StagedPaperReader:
                 title=title,
                 topic_context=topic_context,
                 pages=pages,
+                table_context=table_context,
             )
         )
         experiments = _parse_experiments(
@@ -73,6 +79,7 @@ class StagedPaperReader:
                 title=title,
                 topic_context=topic_context,
                 pages=pages,
+                table_context=table_context,
             )
         )
         topic_relation = _parse_topic_relation(
@@ -81,6 +88,7 @@ class StagedPaperReader:
                 title=title,
                 topic_context=topic_context,
                 pages=pages,
+                table_context=table_context,
             )
         )
 
@@ -89,6 +97,7 @@ class StagedPaperReader:
             title=title,
             source_path=source_path,
             pages=list(pages),
+            source_tables=list(source_tables or []),
             summary=summary,
             claims=claims,
             method_modules=method_modules,
@@ -104,6 +113,7 @@ class StagedPaperReader:
         title: str,
         topic_context: str,
         pages: Sequence[PageText],
+        table_context: str,
     ) -> Any:
         prompt = "\n".join(
             [
@@ -121,6 +131,13 @@ class StagedPaperReader:
                 "",
                 "## Paper Text",
                 _pages_to_prompt_text(pages),
+                "",
+                "## Source Tables",
+                (
+                    table_context
+                    if stage == "experiments"
+                    else "Source tables are only included in the experiments stage."
+                ),
             ]
         )
         return await self.llm.generate_json(prompt, model=self.model, temperature=0.1)
@@ -180,6 +197,9 @@ def _schema_instructions(stage: str) -> str:
             "an object with text, page, section, quote, confidence. source.quote "
             "should be the exact table row or nearby sentence containing the method, "
             "metric, and value; if only a caption is available, set confidence low. "
+            "Prefer Source Tables over PDF text for benchmark tables. When using a "
+            "Source Table, set source.page to 0, put the table_id in source.text, "
+            "and preserve the row plus relevant column headers in source.quote. "
             "Do not use source_evidence."
         ),
         "topic_relation": (
@@ -203,6 +223,35 @@ def _pages_to_prompt_text(
             break
         page_text = f"[Page {page.page}]\n{page.text}"
         chunks.append(page_text[:remaining])
+        remaining -= len(chunks[-1])
+    return "\n\n".join(chunks)
+
+
+def _source_tables_to_prompt_text(
+    source_tables: Sequence[SourceTable],
+    max_chars: int = 40000,
+) -> str:
+    if not source_tables:
+        return "No TeX source tables available."
+    chunks = []
+    remaining = max_chars
+    for table in source_tables:
+        if remaining <= 0:
+            break
+        table_text = "\n".join(
+            [
+                f"Table ID: {table.table_id}",
+                f"Caption: {table.caption or 'N/A'}",
+                f"Label: {table.label or 'N/A'}",
+                f"Section: {table.section or 'N/A'}",
+                f"Source: {table.source_path}",
+                "Markdown:",
+                table.markdown or "N/A",
+                "LaTeX:",
+                table.latex,
+            ]
+        )
+        chunks.append(table_text[:remaining])
         remaining -= len(chunks[-1])
     return "\n\n".join(chunks)
 

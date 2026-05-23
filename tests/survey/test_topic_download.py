@@ -92,6 +92,19 @@ class FakeDownloader:
         target_path.write_bytes(f"%PDF-1.4\n{paper_id}\n".encode("utf-8"))
 
 
+class FakeSourceDownloader:
+    def __init__(self, fail_on: set[str] | None = None) -> None:
+        self.calls: list[tuple[str, Path]] = []
+        self.fail_on = fail_on or set()
+
+    async def __call__(self, source_url: str, target_path: Path) -> None:
+        self.calls.append((source_url, target_path))
+        paper_id = target_path.stem
+        if paper_id in self.fail_on:
+            raise RuntimeError(f"source download failed: {paper_id}")
+        target_path.write_bytes(f"source for {paper_id}\n".encode("utf-8"))
+
+
 def test_materialize_topic_downloads_writes_pdfs_manifest_and_report(
     tmp_path: Path,
 ) -> None:
@@ -144,6 +157,46 @@ def test_materialize_topic_downloads_writes_pdfs_manifest_and_report(
     )
     assert raw_report["downloaded"] == ["2605.00001", "2605.00003"]
     assert raw_report["manifest_path"] == str(topic_dir / "ingest_manifest.yaml")
+
+
+def test_materialize_topic_downloads_downloads_arxiv_source_archives(
+    tmp_path: Path,
+) -> None:
+    from src.survey.topic_download import materialize_topic_downloads
+
+    topic_dir = tmp_path / "utility_nav"
+    topic_path = _write_topic(topic_dir)
+    discovery_path = _write_discovery(topic_dir, [_candidate("2605.00001")])
+    pdf_downloader = FakeDownloader()
+    source_downloader = FakeSourceDownloader()
+
+    report = asyncio.run(
+        materialize_topic_downloads(
+            topic_path=topic_path,
+            candidates_path=discovery_path,
+            manifest_path=topic_dir / "ingest_manifest.yaml",
+            limit=10,
+            include_existing=False,
+            force=False,
+            download_one=pdf_downloader,
+            download_source=source_downloader,
+        )
+    )
+
+    assert report.source_downloaded == ["2605.00001"]
+    assert report.source_failed == []
+    assert source_downloader.calls == [
+        (
+            "https://arxiv.org/e-print/2605.00001",
+            topic_dir / "sources" / "2605.00001.tar.gz",
+        )
+    ]
+    raw_manifest = (topic_dir / "ingest_manifest.yaml").read_text(encoding="utf-8")
+    assert "source_archive: sources/2605.00001.tar.gz" in raw_manifest
+    manifest = load_ingest_manifest(topic_dir / "ingest_manifest.yaml")
+    assert manifest.papers[0].source_archive_path == (
+        topic_dir / "sources" / "2605.00001.tar.gz"
+    ).resolve()
 
 
 def test_materialize_topic_downloads_reuses_existing_pdf_and_respects_limit(

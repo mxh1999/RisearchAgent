@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 import pytest
 
-from src.reader.staged_models import Evidence, PageText
+from src.reader.staged_models import Evidence, PageText, SourceTable
 from src.reader.staged_reader import StagedPaperReader
 from src.survey.models import ConceptAxis, TopicProfile, TopicScope
 
@@ -264,6 +264,42 @@ async def test_staged_reader_accepts_no_topic() -> None:
     assert package.summary is not None
     assert len(llm.prompts) == 5
     assert all("No topic profile provided." in prompt for prompt in llm.prompts)
+
+
+@pytest.mark.asyncio
+async def test_staged_reader_adds_source_tables_to_experiments_prompt() -> None:
+    title, pages = _pages()
+    llm = FakeLLM()
+    reader = StagedPaperReader(llm=llm, model="test-model")
+    source_tables = [
+        SourceTable(
+            table_id="table-1",
+            caption="ObjectNav results on HM3D and MP3D.",
+            label="tab:objectnav",
+            section="Experiments",
+            latex=(
+                r"\begin{tabular}{lcc} Method & SR & SPL \\ "
+                r"Ours & 53.5 & 27.3 \end{tabular}"
+            ),
+            markdown="| Method | SR | SPL |\n|---|---|---|\n| Ours | 53.5 | 27.3 |",
+            source_path="source/main.tex",
+        )
+    ]
+
+    package = await reader.read(
+        paper_id="utility",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        source_tables=source_tables,
+    )
+
+    experiments_prompt = llm.prompts[STAGES.index("experiments")]
+    assert "## Source Tables" in experiments_prompt
+    assert "Table ID: table-1" in experiments_prompt
+    assert "ObjectNav results on HM3D and MP3D." in experiments_prompt
+    assert "| Ours | 53.5 | 27.3 |" in experiments_prompt
+    assert package.source_tables == source_tables
 
 
 @pytest.mark.asyncio

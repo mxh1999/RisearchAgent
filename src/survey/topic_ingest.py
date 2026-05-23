@@ -21,6 +21,7 @@ class IngestManifestEntry:
     title: str
     source_kind: str
     source_path: Path
+    source_archive_path: Path | None = None
     metadata: dict[str, MetadataValue] = field(default_factory=dict)
 
 
@@ -36,6 +37,7 @@ class PlannedIngestEntry:
     title: str
     source_kind: str
     source_path: Path
+    source_archive_path: Path | None
     output_json_path: Path
     output_markdown_path: Path
     metadata: dict[str, MetadataValue] = field(default_factory=dict)
@@ -157,6 +159,7 @@ def plan_topic_ingest(
             title=paper.title,
             source_kind=paper.source_kind,
             source_path=paper.source_path,
+            source_archive_path=paper.source_archive_path,
             output_json_path=resolved_readings_dir / f"{paper.paper_id}.json",
             output_markdown_path=resolved_readings_dir
             / f"{paper.paper_id}.reading.md",
@@ -229,6 +232,7 @@ async def ingest_topic_papers(
                 title=entry.title,
                 source_path=entry.source_path,
                 source_kind=entry.source_kind,
+                source_archive_path=entry.source_archive_path,
                 output_dir=plan.readings_dir,
                 topic=plan.topic,
             )
@@ -314,11 +318,13 @@ def _load_entry(
     if source_path.is_dir():
         raise ValueError(f"Source path is a directory: {source_path}")
 
+    source_archive_path = _load_optional_source_archive(paper, paper_id, base_dir)
     return IngestManifestEntry(
         paper_id=paper_id,
         title=title,
         source_kind=source_kind,
         source_path=source_path,
+        source_archive_path=source_archive_path,
         metadata=_load_metadata(paper, paper_id),
     )
 
@@ -344,3 +350,21 @@ def _load_metadata(paper: dict[str, Any], paper_id: str) -> dict[str, MetadataVa
                 raise ValueError(f"Paper {paper_id} metadata {key} must be a str")
             metadata[key] = value
     return metadata
+
+
+def _load_optional_source_archive(
+    paper: dict[str, Any],
+    paper_id: str,
+    base_dir: Path,
+) -> Path | None:
+    if "source_archive" not in paper:
+        return None
+    value = paper["source_archive"]
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Paper {paper_id} source_archive must be a non-empty string")
+    source_archive_path = (base_dir / value).resolve()
+    if not source_archive_path.exists():
+        raise ValueError(f"Source archive does not exist: {source_archive_path}")
+    if source_archive_path.is_dir():
+        raise ValueError(f"Source archive path is a directory: {source_archive_path}")
+    return source_archive_path
