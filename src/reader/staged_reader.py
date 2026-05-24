@@ -316,7 +316,12 @@ def _parse_experiments(raw: Any) -> list[ExperimentRecord]:
             record["setting"] = "N/A"
         for key in ("benchmark", "setting", "metric", "method"):
             _require_string(_required(record, key, f"{path}.{key}"), f"{path}.{key}")
-        _require_number(_required(record, "value", f"{path}.value"), f"{path}.value")
+        try:
+            record["value"] = _require_number(
+                _required(record, "value", f"{path}.value"), f"{path}.value"
+            )
+        except ValueError:
+            continue
         _require_boolish(
             _required(record, "higher_is_better", f"{path}.higher_is_better"),
             f"{path}.higher_is_better",

@@ -338,18 +338,19 @@ async def test_staged_reader_rejects_malformed_summary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_staged_reader_rejects_malformed_experiment_value() -> None:
+async def test_staged_reader_skips_malformed_experiment_value() -> None:
     title, pages = _pages()
     reader = StagedPaperReader(llm=FakeLLM(experiment_value="bad"), model="test-model")
 
-    with pytest.raises(ValueError, match=r"experiments\[0\]\.value"):
-        await reader.read(
-            paper_id="paper-1",
-            title=title,
-            source_path="papers/utility.pdf",
-            pages=pages,
-            topic=_topic_profile(),
-        )
+    package = await reader.read(
+        paper_id="paper-1",
+        title=title,
+        source_path="papers/utility.pdf",
+        pages=pages,
+        topic=_topic_profile(),
+    )
+
+    assert package.experiments == []
 
 
 @pytest.mark.asyncio
