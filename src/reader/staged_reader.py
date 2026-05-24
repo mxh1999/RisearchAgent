@@ -456,9 +456,18 @@ def _require_int(raw: Any, path: str) -> int:
 
 
 def _require_number(raw: Any, path: str) -> float:
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+    if isinstance(raw, bool):
         raise ValueError(f"{path} must be a number")
-    return float(raw)
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped:
+            try:
+                return float(stripped)
+            except ValueError:
+                pass
+    raise ValueError(f"{path} must be a number")
 
 
 def _require_boolish(raw: Any, path: str) -> Any:
