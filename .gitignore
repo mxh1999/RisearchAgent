@@ -19,7 +19,7 @@ data/
 # Local worktrees
 .worktrees/
 
-# Claude Code
+# Agent tooling
 .claude/
 
 # IDE

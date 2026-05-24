@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Project
 
@@ -34,6 +34,8 @@ python run.py onboard --refine
 # Verbose logging
 python run.py -v <command>
 ```
+
+Experiments should use the `paper_reader` conda environment.
 
 No test suite exists yet — the `tests/` directory contains only an empty `__init__.py`.
 
