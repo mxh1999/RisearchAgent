@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
 
-from src.config import LLMConfig, load_config
+from src.config import load_config
+from src.llm.client import create_llm_client, normalize_llm_config
 from src.reader.staged_models import PaperReadingPackage
 from src.survey.artifacts import TopicArtifactManager
 from src.survey.models import SurveyEvent, TopicProfile
@@ -16,32 +15,13 @@ from src.survey.refiner import TopicRefiner
 
 
 async def cmd_survey_refine(args) -> None:
-    try:
-        from src.llm.gemini_client import GeminiClient
-    except ModuleNotFoundError as exc:
-        if exc.name and (exc.name == "google" or exc.name.startswith("google.")):
-            raise SystemExit(
-                "Error: google-genai is required for survey refine. "
-                "Run pip install -r requirements.txt."
-            ) from exc
-        raise
-
     load_dotenv()
     app_config = load_config(args.config)
-    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
-    if not api_key:
-        print("Error: GEMINI_API_KEY environment variable not set.")
-        sys.exit(1)
+    llm_config = normalize_llm_config(app_config.llm)
+    if not llm_config.api_key:
+        raise SystemExit(f"Error: {llm_config.api_key_env} environment variable not set.")
 
-    llm_config = LLMConfig(
-        filter_model=app_config.llm.filter_model,
-        reader_model=app_config.llm.reader_model,
-        embedding_model=app_config.llm.embedding_model,
-        api_key=api_key,
-        max_concurrent=app_config.llm.max_concurrent,
-        temperature=app_config.llm.temperature,
-    )
-    llm = GeminiClient(llm_config)
+    llm = create_llm_client(llm_config)
     refiner = TopicRefiner(llm, model=llm_config.reader_model)
 
     if args.from_note:
@@ -79,36 +59,17 @@ async def cmd_survey_synthesize(args) -> None:
     except (FileNotFoundError, ValueError) as exc:
         raise SystemExit(f"Error loading reading packages: {exc}") from exc
 
-    try:
-        from src.llm.gemini_client import GeminiClient
-    except ModuleNotFoundError as exc:
-        if exc.name and (exc.name == "google" or exc.name.startswith("google.")):
-            raise SystemExit(
-                "Error: google-genai is required for survey synthesize. "
-                "Run pip install -r requirements.txt."
-            ) from exc
-        raise
-
     from src.survey.synthesizer import SurveySynthesizer
 
     load_dotenv()
     app_config = load_config(args.config)
-    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
-    if not api_key:
-        raise SystemExit("Error: GEMINI_API_KEY environment variable not set.")
-
-    llm_config = LLMConfig(
-        filter_model=app_config.llm.filter_model,
-        reader_model=app_config.llm.reader_model,
-        embedding_model=app_config.llm.embedding_model,
-        api_key=api_key,
-        max_concurrent=app_config.llm.max_concurrent,
-        temperature=app_config.llm.temperature,
-    )
+    llm_config = normalize_llm_config(app_config.llm)
+    if not llm_config.api_key:
+        raise SystemExit(f"Error: {llm_config.api_key_env} environment variable not set.")
 
     try:
         synthesis = await SurveySynthesizer(
-            GeminiClient(llm_config), model=llm_config.reader_model
+            create_llm_client(llm_config), model=llm_config.reader_model
         ).synthesize(topic, packages)
     except ValueError as exc:
         raise SystemExit(f"Error synthesizing survey: {exc}") from exc

@@ -1,0 +1,30 @@
+topics:
+- name: Example Topic
+  query: (cat:cs.RO OR cat:cs.AI OR cat:cs.CV) AND ("embodied navigation" AND "memory")
+  categories:
+  - cs.RO
+  - cs.AI
+  - cs.CV
+  research_profile: >
+    Describe your research interests here. This profile is used by relevance
+    filters to decide whether papers are worth reading.
+llm:
+  response_format: gpt
+  base_url: https://your-provider.example.com
+  api_key_env: RISEARCHAGENT_API_KEY
+  filter_model: your-fast-model
+  reader_model: your-strong-model
+  embedding_model: legacy-unused
+  max_concurrent: 5
+  temperature: 0.3
+scraper:
+  max_results_per_topic: 20
+  delay_seconds: 3.0
+  days_lookback: 30
+filter:
+  relevance_threshold: 6
+  borderline_min: 4
+db_path: data/papers.db
+chroma_path: data/chroma
+pdf_dir: data/pdfs
+sota_dir: data/sota

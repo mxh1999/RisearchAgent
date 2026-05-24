@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
 
-from src.config import LLMConfig, load_config
+from src.config import load_config
+from src.llm.client import create_llm_client, normalize_llm_config
 from src.reader.latex_source_extractor import extract_tables_from_latex_source
 from src.reader.page_extractor import extract_pages_from_pdf, extract_pages_from_text_file
 from src.reader.reading_renderer import validate_safe_paper_id, write_reading_package
@@ -62,30 +62,11 @@ async def cmd_read_staged(args) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    try:
-        from src.llm.gemini_client import GeminiClient
-    except ModuleNotFoundError as exc:
-        if exc.name and (exc.name == "google" or exc.name.startswith("google.")):
-            raise SystemExit(
-                "Error: google-genai is required for staged read. "
-                "Run pip install -r requirements.txt."
-            ) from exc
-        raise
-
     load_dotenv()
     app_config = load_config(args.config)
-    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
-    if not api_key:
-        raise SystemExit("Error: GEMINI_API_KEY environment variable not set.")
-
-    llm_config = LLMConfig(
-        filter_model=app_config.llm.filter_model,
-        reader_model=app_config.llm.reader_model,
-        embedding_model=app_config.llm.embedding_model,
-        api_key=api_key,
-        max_concurrent=app_config.llm.max_concurrent,
-        temperature=app_config.llm.temperature,
-    )
+    llm_config = normalize_llm_config(app_config.llm)
+    if not llm_config.api_key:
+        raise SystemExit(f"Error: {llm_config.api_key_env} environment variable not set.")
 
     topic_path = Path(args.topic) if args.topic else None
     topic = _load_topic(topic_path) if topic_path else None
@@ -94,7 +75,9 @@ async def cmd_read_staged(args) -> None:
         topic_path=topic_path,
     )
 
-    reader = StagedPaperReader(GeminiClient(llm_config), model=llm_config.reader_model)
+    reader = StagedPaperReader(
+        create_llm_client(llm_config), model=llm_config.reader_model
+    )
     source_path = Path(args.pdf or args.text_file)
     json_path, markdown_path = await read_staged_source(
         reader=reader,

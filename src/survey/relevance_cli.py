@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.config import LLMConfig, load_config
+from src.config import load_config
+from src.llm.client import create_llm_client, normalize_llm_config
 from src.survey.relevance import (
     RelevanceLLM,
     screen_discovery_candidates,
@@ -83,29 +83,13 @@ def _resolve_llm(args, injected: RelevanceLLM | None) -> tuple[RelevanceLLM, str
     if injected is not None:
         return injected, args.model
 
-    try:
-        from src.llm.gemini_client import GeminiClient
-    except ModuleNotFoundError as exc:
-        if exc.name and (exc.name == "google" or exc.name.startswith("google.")):
-            raise SystemExit(
-                "Error: google-genai is required for topic relevance screening. "
-                "Run pip install -r requirements.txt."
-            ) from exc
-        raise
-
     load_dotenv()
     app_config = load_config(args.config)
-    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
-    if not api_key:
+    llm_config = normalize_llm_config(app_config.llm)
+    if not llm_config.api_key:
         raise SystemExit(
-            "Error: GEMINI_API_KEY environment variable not set for topic relevance screening."
+            "Error: "
+            f"{llm_config.api_key_env} environment variable not set "
+            "for topic relevance screening."
         )
-    llm_config = LLMConfig(
-        filter_model=app_config.llm.filter_model,
-        reader_model=app_config.llm.reader_model,
-        embedding_model=app_config.llm.embedding_model,
-        api_key=api_key,
-        max_concurrent=app_config.llm.max_concurrent,
-        temperature=app_config.llm.temperature,
-    )
-    return GeminiClient(llm_config), args.model or llm_config.filter_model
+    return create_llm_client(llm_config), args.model or llm_config.filter_model

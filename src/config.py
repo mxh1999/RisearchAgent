@@ -16,6 +16,9 @@ class LLMConfig:
     api_key: str
     max_concurrent: int
     temperature: float
+    response_format: str = "gemini"
+    base_url: str = ""
+    api_key_env: str = "GEMINI_API_KEY"
 
 
 @dataclass
@@ -61,13 +64,21 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     ]
 
     llm_raw = raw["llm"]
+    response_format = llm_raw.get("response_format", "gemini")
+    default_api_key_env = (
+        "GEMINI_API_KEY" if response_format == "gemini" else "RISEARCHAGENT_API_KEY"
+    )
+    api_key_env = llm_raw.get("api_key_env", default_api_key_env)
     llm = LLMConfig(
         filter_model=llm_raw.get("filter_model", "gemini-2.5-flash"),
         reader_model=llm_raw.get("reader_model", "gemini-2.5-pro"),
         embedding_model=llm_raw.get("embedding_model", "text-embedding-004"),
-        api_key=os.environ.get("GEMINI_API_KEY", ""),
+        api_key=os.environ.get(api_key_env, ""),
         max_concurrent=llm_raw.get("max_concurrent", 5),
         temperature=llm_raw.get("temperature", 0.3),
+        response_format=response_format,
+        base_url=llm_raw.get("base_url", ""),
+        api_key_env=api_key_env,
     )
 
     scraper_raw = raw.get("scraper", {})

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.config import LLMConfig, load_config
+from src.config import load_config
+from src.llm.client import create_llm_client, normalize_llm_config
 from src.reader.staged_models import PaperReadingPackage
 from src.survey.artifacts import TopicArtifactManager
 from src.survey.cli import _load_topic, _validate_topic_path
@@ -124,32 +124,14 @@ def _load_registry(path: Path) -> SettingGroupRegistry:
 
 
 def _build_llm(config_path: str):
-    try:
-        from src.llm.gemini_client import GeminiClient
-    except ModuleNotFoundError as exc:
-        if exc.name and (exc.name == "google" or exc.name.startswith("google.")):
-            raise SystemExit(
-                "Error: google-genai is required for SOTA setting normalization. "
-                "Run pip install -r requirements.txt or pass --no-llm-normalize."
-            ) from exc
-        raise
-
     load_dotenv()
     app_config = load_config(config_path)
-    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
-    if not api_key:
+    llm_config = normalize_llm_config(app_config.llm)
+    if not llm_config.api_key:
         print(
-            "Error: GEMINI_API_KEY environment variable not set. "
+            f"Error: {llm_config.api_key_env} environment variable not set. "
             "Pass --no-llm-normalize to run conservative SOTA grouping."
         )
         sys.exit(1)
 
-    llm_config = LLMConfig(
-        filter_model=app_config.llm.filter_model,
-        reader_model=app_config.llm.reader_model,
-        embedding_model=app_config.llm.embedding_model,
-        api_key=api_key,
-        max_concurrent=app_config.llm.max_concurrent,
-        temperature=app_config.llm.temperature,
-    )
-    return GeminiClient(llm_config), llm_config.reader_model
+    return create_llm_client(llm_config), llm_config.reader_model

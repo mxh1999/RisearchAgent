@@ -37,7 +37,8 @@ The legacy global pipeline is still available, but new topic survey work should 
 pip install -r requirements.txt
 
 # Set up environment
-cp .env.example .env       # add your GEMINI_API_KEY
+cp .env.example .env       # add your RISEARCHAGENT_API_KEY
+cp example.yaml config.yaml # add your provider base_url and model names
 
 # Interactive onboarding - builds your config.yaml via conversation
 python run.py onboard
@@ -101,12 +102,31 @@ If the source archive is unavailable or cannot be parsed, ingestion continues wi
 
 ## Configuration
 
-`config.yaml` controls the legacy global pipeline. Topic workflows primarily use `topic.yaml` files created under `data/topics/<topic_id>/`.
+`config.yaml` is local-only and ignored by git because it may contain private provider endpoints. Start from `example.yaml`:
+
+```bash
+cp example.yaml config.yaml
+```
+
+Set `RISEARCHAGENT_API_KEY` in `.env`, then edit `config.yaml` with your provider base URL and model names. For OpenAI-compatible wrappers, use:
+
+```yaml
+llm:
+  response_format: gpt
+  base_url: https://your-provider.example.com
+  api_key_env: RISEARCHAGENT_API_KEY
+  filter_model: your-fast-model
+  reader_model: your-strong-model
+```
+
+`response_format` selects the API dialect: `gpt` for OpenAI-compatible chat completions, `claude` for Anthropic-compatible messages, and `gemini` for Gemini-native calls.
+
+Topic workflows primarily use `topic.yaml` files created under `data/topics/<topic_id>/`.
 
 | Section | What it does |
 |---------|-------------|
 | `topics` | arXiv search queries and per-topic research profile for relevance filtering |
-| `llm` | Model selection, concurrency, temperature, and API key fallback |
+| `llm` | Provider dialect, base URL, model selection, concurrency, temperature, and API key env var |
 | `scraper` | Max results per topic and lookback window in days |
 | `filter` | Relevance score thresholds |
 
@@ -114,7 +134,7 @@ If the source archive is unavailable or cannot be parsed, ingestion continues wi
 
 | Component | Choice |
 |-----------|--------|
-| LLM | Gemini Flash for filtering and Gemini Pro for deep reading |
+| LLM | Configurable GPT-compatible, Claude-compatible, or Gemini-compatible chat model |
 | PDF Extraction | `pymupdf4llm` with PyMuPDF fallback |
 | Table Extraction | arXiv TeX source archives when available |
 | Vector Store | ChromaDB |

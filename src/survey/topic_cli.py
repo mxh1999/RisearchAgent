@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.config import LLMConfig, load_config
+from src.config import load_config
+from src.llm.client import create_llm_client, normalize_llm_config
 from src.survey.topic_update import load_topic_update_context, update_topic_artifacts
 
 
@@ -50,32 +49,15 @@ async def cmd_topic_update(args) -> None:
 
 
 def _build_llm(config_path: str, purpose: str):
-    try:
-        from src.llm.gemini_client import GeminiClient
-    except ModuleNotFoundError as exc:
-        if exc.name and (exc.name == "google" or exc.name.startswith("google.")):
-            raise SystemExit(
-                f"Error: google-genai is required for {purpose}. "
-                "Run pip install -r requirements.txt."
-            ) from exc
-        raise
-
     load_dotenv()
     app_config = load_config(config_path)
-    api_key = os.environ.get("GEMINI_API_KEY", "") or app_config.llm.api_key
-    if not api_key:
-        print(f"Error: GEMINI_API_KEY environment variable not set for {purpose}.")
-        sys.exit(1)
+    llm_config = normalize_llm_config(app_config.llm)
+    if not llm_config.api_key:
+        raise SystemExit(
+            f"Error: {llm_config.api_key_env} environment variable not set for {purpose}."
+        )
 
-    llm_config = LLMConfig(
-        filter_model=app_config.llm.filter_model,
-        reader_model=app_config.llm.reader_model,
-        embedding_model=app_config.llm.embedding_model,
-        api_key=api_key,
-        max_concurrent=app_config.llm.max_concurrent,
-        temperature=app_config.llm.temperature,
-    )
-    return GeminiClient(llm_config), llm_config.reader_model
+    return create_llm_client(llm_config), llm_config.reader_model
 
 
 def run_topic_command(args) -> None:
