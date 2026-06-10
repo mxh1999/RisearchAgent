@@ -63,15 +63,16 @@ def parse_pdf_paper(
     if pdf_path is None:
         url = pdf_url or default_pdf_url(paper_id)
         downloader = download_pdf or default_download_pdf
-        try:
-            downloader(url, source_path)
-        except Exception as exc:
-            return _empty_parsed_paper(
-                paper_id=paper_id,
-                source_path=source_path,
-                availability="failed",
-                warnings=[f"Download failed: {exc}"],
-            )
+        if not source_path.exists():
+            try:
+                downloader(url, source_path)
+            except Exception as exc:
+                return _empty_parsed_paper(
+                    paper_id=paper_id,
+                    source_path=source_path,
+                    availability="failed",
+                    warnings=[f"Download failed: {exc}"],
+                )
 
     if not source_path.exists():
         return _empty_parsed_paper(
@@ -98,6 +99,7 @@ def parse_pdf_paper(
         source_path=source_path,
         pages=pages,
         warnings=warnings,
+        table_max_pages=max_pages,
     )
 
 
@@ -109,6 +111,7 @@ def build_parsed_pdf_paper(
     warnings: Optional[list[str]] = None,
     chunk_target_tokens: int = DEFAULT_CHUNK_TARGET_TOKENS,
     chunk_max_tokens: int = DEFAULT_CHUNK_MAX_TOKENS,
+    table_max_pages: int | None = None,
 ) -> dict[str, Any]:
     """
     Build ParsedPaper from already extracted page text.
@@ -132,7 +135,13 @@ def build_parsed_pdf_paper(
         chunk_target_tokens=chunk_target_tokens,
         chunk_max_tokens=chunk_max_tokens,
     )
-    tables = _extract_tables(sections)
+    formulas = _extract_formulas(sections)
+    tables = _extract_tables(
+        sections,
+        source_path=source_path,
+        warnings=parser_warnings,
+        max_pages=table_max_pages,
+    )
     figures = _extract_figures(sections)
     references_count = _count_references(sections)
     text_chars = sum(section["char_count"] for section in sections)
@@ -142,6 +151,13 @@ def build_parsed_pdf_paper(
         "section_count": len(sections),
         "table_count": len(tables),
         "figure_caption_count": len(figures),
+        "formula_count": len(formulas),
+        "display_formula_count": sum(
+            1 for formula in formulas if formula["kind"] == "display"
+        ),
+        "inline_formula_count": sum(
+            1 for formula in formulas if formula["kind"] == "inline"
+        ),
         "chunk_count": len(chunks),
         "oversized_chunk_count": sum(1 for chunk in chunks if chunk["oversized"]),
         "candidate_numeric_result_count": _count_candidate_numeric_results(cleaned_text),
@@ -162,6 +178,7 @@ def build_parsed_pdf_paper(
         "chunks": chunks,
         "tables": tables,
         "figures": figures,
+        "formulas": formulas,
         "references_count": references_count,
         "warnings": parser_warnings,
         "metrics": metrics,
@@ -238,12 +255,16 @@ def _empty_parsed_paper(
         "chunks": [],
         "tables": [],
         "figures": [],
+        "formulas": [],
         "references_count": 0,
         "warnings": warnings,
         "metrics": {
             "section_count": 0,
             "table_count": 0,
             "figure_caption_count": 0,
+            "formula_count": 0,
+            "display_formula_count": 0,
+            "inline_formula_count": 0,
             "chunk_count": 0,
             "oversized_chunk_count": 0,
             "candidate_numeric_result_count": 0,
@@ -581,15 +602,191 @@ def _split_long_paragraph(paragraph: str, target_tokens: int) -> list[str]:
     return chunks
 
 
-def _extract_tables(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _extract_formulas(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    formulas: list[dict[str, Any]] = []
+    for section in sections:
+        occupied_spans: list[tuple[int, int]] = []
+        text = section["text"]
+        line_start = 0
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            line_end = line_start + len(raw_line)
+            display = _parse_display_formula(line)
+            if display is not None:
+                formula_text, label = display
+                formulas.append(
+                    _formula_record(
+                        formula_id=f"formula-{len(formulas) + 1:04d}",
+                        section_id=section["section_id"],
+                        kind="display",
+                        text=formula_text,
+                        label=label,
+                        order=len(formulas),
+                        char_start=line_start,
+                        char_end=line_end,
+                        section_text=text,
+                    )
+                )
+                occupied_spans.append((line_start, line_end))
+            line_start = line_end + 1
+
+        for match in _iter_inline_formula_matches(text, occupied_spans):
+            formulas.append(
+                _formula_record(
+                    formula_id=f"formula-{len(formulas) + 1:04d}",
+                    section_id=section["section_id"],
+                    kind="inline",
+                    text=_clean_formula_text(match.group()),
+                    label="",
+                    order=len(formulas),
+                    char_start=match.start(),
+                    char_end=match.end(),
+                    section_text=text,
+                )
+            )
+    formulas.sort(key=lambda item: (item["section_id"], item["char_start"], item["kind"]))
+    for index, formula in enumerate(formulas, start=1):
+        formula["formula_id"] = f"formula-{index:04d}"
+        formula["order"] = index - 1
+    return formulas
+
+
+def _parse_display_formula(line: str) -> tuple[str, str] | None:
+    if not line or len(line) > 220 or _looks_like_table_line(line):
+        return None
+    if _is_omitted_picture_placeholder(line):
+        return None
+    label = ""
+    label_match = re.search(r"\s+\(([\w.-]+)\)\s*$", line)
+    if label_match:
+        label = label_match.group(1)
+        line = line[: label_match.start()].strip()
+    if not _looks_like_formula_text(line):
+        return None
+    if len(re.findall(r"[A-Za-z]{4,}", line)) > 3:
+        return None
+    return _clean_formula_text(line), label
+
+
+def _iter_inline_formula_matches(
+    text: str,
+    occupied_spans: list[tuple[int, int]],
+) -> Iterable[re.Match[str]]:
+    patterns = [
+        re.compile(
+            r"(?<!\w)(?:[A-Za-z][A-Za-z0-9_]*|[\u0370-\u03FF])\s*=\s*"
+            r"[^.,;\n]{1,80}?"
+            r"(?=\s+(?:before|after|where|with|for|from|to|then|and|is|are)\b|[.,;]|\n|$)"
+        ),
+        re.compile(
+            r"(?<!\w)[A-Za-z\u0370-\u03FF][A-Za-z0-9_\u0370-\u03FF]*"
+            r"\([^)\n]{1,40}\)"
+        ),
+    ]
+    seen: set[tuple[int, int]] = set()
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            span = match.span()
+            if span in seen or _span_overlaps(span, occupied_spans):
+                continue
+            formula_text = _clean_formula_text(match.group())
+            if _looks_like_formula_text(formula_text):
+                seen.add(span)
+                yield match
+
+
+def _formula_record(
+    *,
+    formula_id: str,
+    section_id: str,
+    kind: str,
+    text: str,
+    label: str,
+    order: int,
+    char_start: int,
+    char_end: int,
+    section_text: str,
+) -> dict[str, Any]:
+    return {
+        "formula_id": formula_id,
+        "section_id": section_id,
+        "kind": kind,
+        "text": text,
+        "text_preview": _preview(text),
+        "label": label,
+        "context_before": _preview(section_text[max(0, char_start - 160):char_start], 160),
+        "context_after": _preview(section_text[char_end:char_end + 160], 160),
+        "char_start": char_start,
+        "char_end": char_end,
+        "order": order,
+    }
+
+
+def _span_overlaps(
+    span: tuple[int, int],
+    occupied_spans: list[tuple[int, int]],
+) -> bool:
+    start, end = span
+    return any(
+        start < occupied_end and end > occupied_start
+        for occupied_start, occupied_end in occupied_spans
+    )
+
+
+def _looks_like_formula_text(text: str) -> bool:
+    compact = text.strip()
+    if len(compact) < 3:
+        return False
+    if _is_omitted_picture_placeholder(compact):
+        return False
+    math_markers = (
+        "\\sum",
+        "\\log",
+        "\\frac",
+        "\\prod",
+        "\\math",
+        "^",
+        "_",
+        "=",
+        "<=",
+        ">=",
+        "\u2264",
+        "\u2265",
+        "\u2208",
+        "\u2211",
+        "\u220f",
+        "|",
+    )
+    if any(marker in compact for marker in math_markers):
+        return True
+    return bool(re.search(r"[A-Za-z\u0370-\u03FF]\([^)]*[+\-*/=|][^)]*\)", compact))
+
+
+def _is_omitted_picture_placeholder(text: str) -> bool:
+    lowered = text.lower()
+    return "intentionally omitted" in lowered and "picture" in lowered
+
+
+def _clean_formula_text(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.rstrip(".,;:")
+
+
+def _extract_tables(
+    sections: list[dict[str, Any]],
+    *,
+    source_path: Path,
+    warnings: list[str],
+    max_pages: int | None,
+) -> list[dict[str, Any]]:
     tables: list[dict[str, Any]] = []
     for section in sections:
         lines = section["text"].splitlines()
         for index, line in enumerate(lines):
-            caption = _extract_caption(line, "table")
+            caption = _extract_table_caption(lines, index)
             if caption is None:
                 continue
-            markdown = _collect_markdown_table(lines[index + 1:index + 8])
+            markdown = _collect_markdown_table(lines[index + 1:index + 12])
             if not markdown:
                 markdown = "\n".join(lines[index:index + 4]).strip()
             numeric_count = _count_numeric_cells(markdown)
@@ -601,9 +798,187 @@ def _extract_tables(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "markdown_preview": _preview(markdown),
                     "numeric_cell_count": numeric_count,
                     "section_id": section["section_id"],
+                    "extraction_method": "markdown_caption",
                 }
             )
+    pdf_tables = _extract_tables_with_pymupdf(
+        source_path=source_path,
+        sections=sections,
+        warnings=warnings,
+        max_pages=max_pages,
+    )
+    return _merge_tables(tables, pdf_tables)
+
+
+def _extract_table_caption(lines: list[str], index: int) -> str | None:
+    caption = _extract_caption(lines[index], "table")
+    if caption is not None:
+        return caption
+    match = re.match(r"^\s*Table\s+(\d+[a-zA-Z]?)\s*[:.]?\s*$", lines[index], re.I)
+    if not match:
+        return None
+    for offset in range(1, 4):
+        next_index = index + offset
+        if next_index >= len(lines):
+            break
+        candidate = lines[next_index].strip()
+        if not candidate:
+            continue
+        if _looks_like_table_line(candidate):
+            return f"Table {match.group(1)}"
+        return f"Table {match.group(1)}: {candidate.rstrip('.') }."
+    return f"Table {match.group(1)}"
+
+
+def _extract_tables_with_pymupdf(
+    *,
+    source_path: Path,
+    sections: list[dict[str, Any]],
+    warnings: list[str],
+    max_pages: int | None,
+) -> list[dict[str, Any]]:
+    if not source_path.exists():
+        return []
+    try:
+        import fitz
+    except ImportError:
+        return []
+
+    try:
+        doc = fitz.open(source_path)
+    except Exception as exc:
+        warnings.append(f"PyMuPDF table fallback could not open PDF: {exc}")
+        return []
+
+    tables: list[dict[str, Any]] = []
+    try:
+        for page_index, page in enumerate(doc, start=1):
+            if max_pages is not None and page_index > max_pages:
+                break
+            try:
+                found = page.find_tables()
+            except Exception as exc:
+                warnings.append(
+                    f"PyMuPDF table fallback failed on page {page_index}: {exc}"
+                )
+                continue
+            for table in getattr(found, "tables", []) or []:
+                rows = _normalize_table_rows(table.extract())
+                if not _table_has_content(rows):
+                    continue
+                markdown = _rows_to_markdown(rows)
+                section = _guess_table_section(sections, page_index)
+                caption = _guess_table_caption(section, fallback=f"Table on page {page_index}")
+                tables.append(
+                    {
+                        "table_id": f"table-{len(tables) + 1:04d}",
+                        "caption": caption,
+                        "markdown": markdown,
+                        "markdown_preview": _preview(markdown),
+                        "numeric_cell_count": _count_numeric_cells(markdown),
+                        "section_id": section["section_id"] if section else "",
+                        "extraction_method": "pymupdf_find_tables",
+                        "page": page_index,
+                        "bbox": list(getattr(table, "bbox", ()) or ()),
+                    }
+                )
+    finally:
+        doc.close()
     return tables
+
+
+def _normalize_table_rows(raw_rows: object) -> list[list[str]]:
+    if not isinstance(raw_rows, list):
+        return []
+    rows: list[list[str]] = []
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, list):
+            continue
+        rows.append(["" if cell is None else str(cell).strip() for cell in raw_row])
+    return rows
+
+
+def _table_has_content(rows: list[list[str]]) -> bool:
+    non_empty_cells = sum(1 for row in rows for cell in row if cell)
+    numeric_cells = sum(
+        1 for row in rows for cell in row if re.search(r"[-+]?\d+(?:\.\d+)?", cell)
+    )
+    return non_empty_cells >= 4 and numeric_cells >= 1
+
+
+def _rows_to_markdown(rows: list[list[str]]) -> str:
+    if not rows:
+        return ""
+    width = max(len(row) for row in rows)
+    normalized = [row + [""] * (width - len(row)) for row in rows]
+    header = normalized[0]
+    body = normalized[1:]
+    lines = [
+        _markdown_row(header),
+        _markdown_row(["---"] * width),
+    ]
+    lines.extend(_markdown_row(row) for row in body)
+    return "\n".join(lines)
+
+
+def _markdown_row(values: list[str]) -> str:
+    return "| " + " | ".join(_escape_markdown_cell(value) for value in values) + " |"
+
+
+def _escape_markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _guess_table_section(
+    sections: list[dict[str, Any]],
+    page_index: int,
+) -> dict[str, Any] | None:
+    del page_index
+    for section in sections:
+        if section["normalized_type"] in {"experiments", "results"}:
+            return section
+    return sections[0] if sections else None
+
+
+def _guess_table_caption(section: dict[str, Any] | None, fallback: str) -> str:
+    if section is None:
+        return fallback
+    lines = section["text"].splitlines()
+    for index, _line in enumerate(lines):
+        caption = _extract_table_caption(lines, index)
+        if caption is not None:
+            return caption
+    return fallback
+
+
+def _merge_tables(
+    text_tables: list[dict[str, Any]],
+    pdf_tables: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = list(text_tables)
+    for pdf_table in pdf_tables:
+        replaced = False
+        for index, text_table in enumerate(merged):
+            if _same_table_caption(text_table["caption"], pdf_table["caption"]):
+                merged[index] = pdf_table
+                replaced = True
+                break
+        if not replaced:
+            merged.append(pdf_table)
+    for index, table in enumerate(merged, start=1):
+        table["table_id"] = f"table-{index:04d}"
+    return merged
+
+
+def _same_table_caption(left: str, right: str) -> bool:
+    return _caption_key(left) == _caption_key(right)
+
+
+def _caption_key(caption: str) -> str:
+    match = re.match(r"\s*table\s+(\d+[a-zA-Z]?)", caption, re.I)
+    if match:
+        return match.group(1).lower()
+    return re.sub(r"\W+", " ", caption.lower()).strip()
 
 
 def _extract_figures(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -648,8 +1023,15 @@ def _count_numeric_cells(markdown: str) -> int:
         if not raw_line.strip().startswith("|"):
             continue
         cells = [cell.strip() for cell in raw_line.strip("|").split("|")]
-        count += sum(1 for cell in cells if re.search(r"[-+]?\d+(?:\.\d+)?", cell))
+        count += sum(1 for cell in cells if _is_numeric_cell(cell))
     return count
+
+
+def _is_numeric_cell(cell: str) -> bool:
+    normalized = cell.strip()
+    if not normalized:
+        return False
+    return bool(re.fullmatch(r"[-+]?\d+(?:\.\d+)?%?(?:\s*\u00b1\s*\d+(?:\.\d+)?)?", normalized))
 
 
 def _count_references(sections: list[dict[str, Any]]) -> int:
