@@ -330,3 +330,68 @@ def test_parse_tex_source_paper_extracts_section_tree_abstract_citations_and_bbl
     assert "Attention is all you need" in parsed["bibliography"][0]["raw_text"]
     assert parsed["metrics"]["citation_count"] == 1
     assert parsed["metrics"]["bibliography_entry_count"] == 1
+
+
+def test_parse_tex_source_paper_flags_orphan_tabular_and_missing_metadata(
+    tmp_path: Path,
+) -> None:
+    from src.source_benchmark.tex_source_parser import parse_tex_source_paper
+
+    tex_path = tmp_path / "paper.tex"
+    tex_path.write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \begin{document}
+            \section{Results}
+            \begin{tabular}{lc}
+            Method & Score \\
+            Ours & $99.0$ \\
+            \end{tabular}
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_tex_source_paper(paper_id="2401.00010", source_path=tex_path)
+
+    table = parsed["tables"][0]
+    assert "orphan_tabular" in table["quality_flags"]
+    assert "caption_missing" in table["quality_flags"]
+    assert "label_missing" in table["quality_flags"]
+    assert "has_math" in table["quality_flags"]
+    assert parsed["metrics"]["missing_caption_table_count"] == 1
+    assert parsed["metrics"]["missing_label_table_count"] == 1
+
+
+def test_write_parsed_tex_source_paper_writes_json(tmp_path: Path) -> None:
+    import json
+    from src.source_benchmark.tex_source_parser import write_parsed_tex_source_paper
+
+    tex_path = tmp_path / "paper.tex"
+    tex_path.write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \title{Writable}
+            \begin{document}
+            \section{Intro}
+            Text.
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    output_path = write_parsed_tex_source_paper(
+        paper_id="2401.00011",
+        source_path=tex_path,
+        output_dir=tmp_path / "parsed",
+    )
+
+    raw = json.loads(output_path.read_text(encoding="utf-8"))
+    assert output_path.name == "2401.00011.tex.parsed.json"
+    assert raw["paper_id"] == "2401.00011"
+    assert raw["source_type"] == "arxiv_tex"
+    assert raw["title"] == "Writable"

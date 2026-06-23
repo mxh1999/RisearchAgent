@@ -143,6 +143,39 @@ def parse_tex_source_paper(
         )
 
 
+def write_parsed_tex_source_paper(
+    *,
+    paper_id: str,
+    source_path: Path,
+    output_dir: Path,
+    pdf_path: Path | None = None,
+) -> Path:
+    """
+    Parse local TeX source and write the JSON artifact.
+
+    Args:
+        paper_id: Stable paper identifier, usually an arXiv id.
+        source_path: Local source archive, source directory, or plain TeX file.
+        output_dir: Directory for the parsed JSON artifact.
+        pdf_path: Optional downloaded PDF path recorded as provenance only.
+    Returns:
+        Path to the written JSON artifact.
+    """
+    parsed = parse_tex_source_paper(
+        paper_id=paper_id,
+        source_path=source_path,
+        pdf_path=pdf_path,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = paper_id.replace("/", "_")
+    output_path = output_dir / f"{safe_id}.tex.parsed.json"
+    output_path.write_text(
+        json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return output_path
+
+
 def _empty_parsed_paper(
     *,
     paper_id: str,
@@ -1016,6 +1049,43 @@ def _extract_bibitems_from_text(text: str, source_file: str) -> list[dict[str, s
 
 def _compact_latex_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Parse one local arXiv TeX source package into JSON."
+    )
+    parser.add_argument("--paper-id", required=True, help="Paper identifier")
+    parser.add_argument(
+        "--source",
+        required=True,
+        help="Local source archive, extracted source directory, or TeX file",
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory for parsed JSON output",
+    )
+    parser.add_argument(
+        "--pdf",
+        help="Optional local PDF path recorded as provenance only",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    output_path = write_parsed_tex_source_paper(
+        paper_id=args.paper_id,
+        source_path=Path(args.source),
+        output_dir=Path(args.output_dir),
+        pdf_path=Path(args.pdf) if args.pdf else None,
+    )
+    print(output_path)
+
+
+if __name__ == "__main__":
+    main()
 
 
 def _find_matching_brace(text: str, open_pos: int) -> int:
