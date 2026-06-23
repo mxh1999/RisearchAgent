@@ -15,6 +15,36 @@ PARSER_NAME = "tex_source_parser"
 PARSER_VERSION = "0.1.0"
 SOURCE_TYPE = "arxiv_tex"
 _INPUT_RE = re.compile(r"\\(?:input|include)\s*\{([^{}]+)\}")
+_BEGIN_ENV_RE = re.compile(r"\\begin\{([^{}]+)\}")
+_LABEL_RE = re.compile(r"\\label\s*\{([^{}]+)\}")
+_GRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^{}]+)\}")
+_TABLE_ENVS = {
+    "table",
+    "table*",
+    "sidewaystable",
+    "sidewaystable*",
+    "wraptable",
+    "longtable",
+}
+_TABULAR_ENVS = {"tabular", "tabular*", "tabularx"}
+_FIGURE_ENVS = {
+    "figure",
+    "figure*",
+    "wrapfigure",
+    "sidewaysfigure",
+    "sidewaysfigure*",
+}
+_EQUATION_ENVS = {
+    "equation",
+    "equation*",
+    "align",
+    "align*",
+    "gather",
+    "gather*",
+    "multline",
+    "multline*",
+}
+_KNOWN_ENVS = _TABLE_ENVS | _TABULAR_ENVS | _FIGURE_ENVS | _EQUATION_ENVS
 
 
 @dataclass(frozen=True)
@@ -30,6 +60,15 @@ class FlattenedSource:
     text: str
     segments: list[SourceSegment]
     unresolved_input_count: int
+
+
+@dataclass(frozen=True)
+class SourceSpan:
+    kind: str
+    env_name: str
+    start: int
+    end: int
+    partial: bool = False
 
 
 def parse_tex_source_paper(
@@ -150,12 +189,34 @@ def _parse_materialized_source(
         seen=set(),
         flat_offset=0,
     )
+    spans = _find_source_spans(flattened.text, warnings)
+    object_spans = [span for span in spans if span.kind in {"table", "equation", "figure"}]
     sections = _extract_sections_minimal(
         flattened=flattened,
         main_file=main_tex_file,
         source_root=source_root,
+        object_spans=object_spans,
     )
     title = _extract_title(flattened.text)
+    tables = _build_tables(
+        flattened=flattened,
+        source_root=source_root,
+        spans=[span for span in spans if span.kind == "table"],
+        sections=sections,
+    )
+    equations = _build_equations(
+        flattened=flattened,
+        source_root=source_root,
+        spans=[span for span in spans if span.kind == "equation"],
+        sections=sections,
+    )
+    figures = _build_figures(
+        flattened=flattened,
+        source_root=source_root,
+        spans=[span for span in spans if span.kind == "figure"],
+        sections=sections,
+    )
+    public_sections = [_public_section(section) for section in sections]
     return _parsed_paper(
         paper_id=paper_id,
         source_path=source_path,
@@ -164,15 +225,15 @@ def _parse_materialized_source(
         pdf_path=pdf_path,
         title=title,
         abstract="",
-        sections=sections,
-        tables=[],
-        equations=[],
-        figures=[],
+        sections=public_sections,
+        tables=tables,
+        equations=equations,
+        figures=figures,
         citations=[],
         bibliography=[],
         warnings=warnings,
         unresolved_input_count=flattened.unresolved_input_count,
-        partial_environment_count=0,
+        partial_environment_count=sum(1 for span in spans if span.partial),
     )
 
 
@@ -450,6 +511,7 @@ def _extract_sections_minimal(
     flattened: FlattenedSource,
     main_file: Path,
     source_root: Path,
+    object_spans: list[SourceSpan],
 ) -> list[dict[str, Any]]:
     text = flattened.text
     matches = list(re.finditer(r"\\section\*?\s*\{", text))
@@ -463,7 +525,13 @@ def _extract_sections_minimal(
         title = _clean_latex_text(text[title_open + 1:title_close - 1])
         source_start = 0 if order == 0 else match.start()
         latex_source = text[source_start:next_start].strip()
-        plain_text = _clean_latex_text(text[title_close:next_start])
+        body_text = _remove_spans(
+            text=text,
+            start=title_close,
+            end=next_start,
+            spans=object_spans,
+        )
+        plain_text = _clean_latex_text(body_text)
         source_file, line_start = _provenance_for_position(
             flattened=flattened,
             position=match.start(),
@@ -476,7 +544,8 @@ def _extract_sections_minimal(
             fallback=main_file,
             source_root=source_root,
         )
-        section_id = f"sec-{order + 1:04d}"
+        section_label = _extract_label(text[title_close:next_start])
+        section_id = section_label or f"sec-{order + 1:04d}"
         sections.append(
             {
                 "section_id": section_id,
@@ -491,9 +560,314 @@ def _extract_sections_minimal(
                 "source_file": source_file,
                 "line_start": line_start,
                 "line_end": line_end,
+                "_span_start": match.start(),
+                "_span_end": next_start,
             }
         )
     return sections
+
+
+def _public_section(section: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in section.items()
+        if not key.startswith("_")
+    }
+
+
+def _find_source_spans(text: str, warnings: list[str]) -> list[SourceSpan]:
+    env_spans = _find_environment_spans(text, warnings)
+    display_spans = _find_display_math_spans(text)
+    table_containers = [
+        span for span in env_spans if span.env_name in _TABLE_ENVS
+    ]
+    spans: list[SourceSpan] = []
+    for span in env_spans:
+        if span.env_name in _TABLE_ENVS:
+            spans.append(SourceSpan("table", span.env_name, span.start, span.end, span.partial))
+        elif span.env_name in _TABULAR_ENVS:
+            if not _is_contained_by(span, table_containers):
+                spans.append(
+                    SourceSpan("table", span.env_name, span.start, span.end, span.partial)
+                )
+        elif span.env_name in _FIGURE_ENVS:
+            spans.append(SourceSpan("figure", span.env_name, span.start, span.end, span.partial))
+        elif span.env_name in _EQUATION_ENVS:
+            spans.append(
+                SourceSpan("equation", span.env_name, span.start, span.end, span.partial)
+            )
+    spans.extend(display_spans)
+    return sorted(spans, key=lambda item: item.start)
+
+
+def _find_environment_spans(text: str, warnings: list[str]) -> list[SourceSpan]:
+    spans: list[SourceSpan] = []
+    for match in _BEGIN_ENV_RE.finditer(text):
+        env_name = match.group(1)
+        if env_name not in _KNOWN_ENVS:
+            continue
+        end_pattern = re.compile(r"\\end\{" + re.escape(env_name) + r"\}")
+        end_match = end_pattern.search(text, match.end())
+        if end_match is None:
+            warnings.append(f"Partial environment parsed: {env_name}")
+            spans.append(
+                SourceSpan(
+                    kind="environment",
+                    env_name=env_name,
+                    start=match.start(),
+                    end=min(len(text), match.end() + 2000),
+                    partial=True,
+                )
+            )
+            continue
+        spans.append(
+            SourceSpan(
+                kind="environment",
+                env_name=env_name,
+                start=match.start(),
+                end=end_match.end(),
+            )
+        )
+    return spans
+
+
+def _find_display_math_spans(text: str) -> list[SourceSpan]:
+    spans: list[SourceSpan] = []
+    for match in re.finditer(r"\\\[", text):
+        end_match = re.search(r"\\\]", text[match.end():])
+        if end_match is not None:
+            spans.append(
+                SourceSpan(
+                    kind="equation",
+                    env_name=r"\[",
+                    start=match.start(),
+                    end=match.end() + end_match.end(),
+                )
+            )
+    dollar_positions = [match.start() for match in re.finditer(r"(?<!\\)\$\$", text)]
+    for start, end in zip(dollar_positions[0::2], dollar_positions[1::2]):
+        spans.append(SourceSpan(kind="equation", env_name="$$", start=start, end=end + 2))
+    return spans
+
+
+def _is_contained_by(span: SourceSpan, containers: list[SourceSpan]) -> bool:
+    return any(
+        container.start <= span.start and span.end <= container.end
+        for container in containers
+    )
+
+
+def _remove_spans(
+    *,
+    text: str,
+    start: int,
+    end: int,
+    spans: list[SourceSpan],
+) -> str:
+    pieces: list[str] = []
+    cursor = start
+    for span in sorted(spans, key=lambda item: item.start):
+        if span.end <= start or span.start >= end:
+            continue
+        span_start = max(start, span.start)
+        span_end = min(end, span.end)
+        if cursor < span_start:
+            pieces.append(text[cursor:span_start])
+        cursor = max(cursor, span_end)
+    if cursor < end:
+        pieces.append(text[cursor:end])
+    return "".join(pieces)
+
+
+def _build_tables(
+    *,
+    flattened: FlattenedSource,
+    source_root: Path,
+    spans: list[SourceSpan],
+    sections: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    tables: list[dict[str, Any]] = []
+    for index, span in enumerate(spans, start=1):
+        latex_source = flattened.text[span.start:span.end]
+        caption = _extract_caption(latex_source)
+        label = _extract_label(latex_source)
+        source_file, line_start = _provenance_for_position(
+            flattened=flattened,
+            position=span.start,
+            fallback=Path(""),
+            source_root=source_root,
+        )
+        _, line_end = _provenance_for_position(
+            flattened=flattened,
+            position=max(span.start, span.end - 1),
+            fallback=Path(""),
+            source_root=source_root,
+        )
+        table_id = label or f"table-{index:04d}"
+        tables.append(
+            {
+                "table_id": table_id,
+                "caption": caption,
+                "label": label,
+                "section_id": _section_id_for_position(sections, span.start),
+                "latex_source": latex_source,
+                "source_file": source_file,
+                "line_start": line_start,
+                "line_end": line_end,
+                "references": [],
+                "quality_flags": _quality_flags_for_latex(
+                    kind="table",
+                    env_name=span.env_name,
+                    latex_source=latex_source,
+                    caption=caption,
+                    label=label,
+                ),
+            }
+        )
+    return tables
+
+
+def _build_equations(
+    *,
+    flattened: FlattenedSource,
+    source_root: Path,
+    spans: list[SourceSpan],
+    sections: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    equations: list[dict[str, Any]] = []
+    for index, span in enumerate(spans, start=1):
+        latex_source = flattened.text[span.start:span.end]
+        label = _extract_label(latex_source)
+        source_file, line_start = _provenance_for_position(
+            flattened=flattened,
+            position=span.start,
+            fallback=Path(""),
+            source_root=source_root,
+        )
+        _, line_end = _provenance_for_position(
+            flattened=flattened,
+            position=max(span.start, span.end - 1),
+            fallback=Path(""),
+            source_root=source_root,
+        )
+        equations.append(
+            {
+                "equation_id": label or f"equation-{index:04d}",
+                "label": label,
+                "section_id": _section_id_for_position(sections, span.start),
+                "latex_source": latex_source,
+                "source_file": source_file,
+                "line_start": line_start,
+                "line_end": line_end,
+                "references": [],
+                "quality_flags": [],
+            }
+        )
+    return equations
+
+
+def _build_figures(
+    *,
+    flattened: FlattenedSource,
+    source_root: Path,
+    spans: list[SourceSpan],
+    sections: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    figures: list[dict[str, Any]] = []
+    for index, span in enumerate(spans, start=1):
+        latex_source = flattened.text[span.start:span.end]
+        caption = _extract_caption(latex_source)
+        label = _extract_label(latex_source)
+        source_file, line_start = _provenance_for_position(
+            flattened=flattened,
+            position=span.start,
+            fallback=Path(""),
+            source_root=source_root,
+        )
+        _, line_end = _provenance_for_position(
+            flattened=flattened,
+            position=max(span.start, span.end - 1),
+            fallback=Path(""),
+            source_root=source_root,
+        )
+        figures.append(
+            {
+                "figure_id": label or f"figure-{index:04d}",
+                "caption": caption,
+                "label": label,
+                "section_id": _section_id_for_position(sections, span.start),
+                "latex_source": latex_source,
+                "graphics_paths": _extract_graphics_paths(latex_source),
+                "source_file": source_file,
+                "line_start": line_start,
+                "line_end": line_end,
+                "quality_flags": _quality_flags_for_latex(
+                    kind="figure",
+                    env_name=span.env_name,
+                    latex_source=latex_source,
+                    caption=caption,
+                    label=label,
+                ),
+            }
+        )
+    return figures
+
+
+def _section_id_for_position(sections: list[dict[str, Any]], position: int) -> str:
+    for section in sections:
+        if section["_span_start"] <= position < section["_span_end"]:
+            return str(section["section_id"])
+    return sections[-1]["section_id"] if sections else ""
+
+
+def _extract_caption(latex_source: str) -> str:
+    match = re.search(r"\\caption(?:of\{(?:figure|table)\})?(?:\[[^\]]*\])?\s*\{", latex_source)
+    if match is None:
+        return ""
+    open_pos = latex_source.find("{", match.end() - 1)
+    close_pos = _find_matching_brace(latex_source, open_pos)
+    if close_pos < 0:
+        return ""
+    return _clean_latex_text(latex_source[open_pos + 1:close_pos - 1])
+
+
+def _extract_label(latex_source: str) -> str:
+    match = _LABEL_RE.search(latex_source)
+    return match.group(1).strip() if match else ""
+
+
+def _extract_graphics_paths(latex_source: str) -> list[str]:
+    return [match.group(1).strip() for match in _GRAPHICS_RE.finditer(latex_source)]
+
+
+def _quality_flags_for_latex(
+    *,
+    kind: str,
+    env_name: str,
+    latex_source: str,
+    caption: str,
+    label: str,
+) -> list[str]:
+    flags: list[str] = []
+    if kind in {"table", "figure"} and not caption:
+        flags.append("caption_missing")
+    if kind in {"table", "figure"} and not label:
+        flags.append("label_missing")
+    if kind == "table" and env_name in _TABULAR_ENVS:
+        flags.append("orphan_tabular")
+    if "\\multicolumn" in latex_source:
+        flags.append("has_multicolumn")
+    if "\\multirow" in latex_source:
+        flags.append("has_multirow")
+    if "\\resizebox" in latex_source or "\\scalebox" in latex_source:
+        flags.append("has_resizebox")
+    if "\\adjustbox" in latex_source or "\\begin{adjustbox}" in latex_source:
+        flags.append("has_adjustbox")
+    if kind == "table" and len(re.findall(r"\\begin\{tabular\*?|\\begin\{tabularx\}", latex_source)) > 1:
+        flags.append("has_nested_tabular")
+    if kind == "table" and re.search(r"(?<!\\)\$|\\\(|\\\[", latex_source):
+        flags.append("has_math")
+    return flags
 
 
 def _find_matching_brace(text: str, open_pos: int) -> int:

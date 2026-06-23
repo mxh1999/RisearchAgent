@@ -200,3 +200,71 @@ def test_parse_tex_source_paper_preserves_unresolved_inputs(tmp_path: Path) -> N
     assert parsed["metrics"]["unresolved_input_count"] == 1
     assert any("Unresolved input" in warning for warning in parsed["warnings"])
     assert r"\input{missing/intro}" in parsed["sections"][0]["latex_source"]
+
+
+def test_parse_tex_source_paper_extracts_tables_figures_and_equations(
+    tmp_path: Path,
+) -> None:
+    from src.source_benchmark.tex_source_parser import parse_tex_source_paper
+
+    tex_path = tmp_path / "paper.tex"
+    tex_path.write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \title{Objects Paper}
+            \begin{document}
+            \section{Experiments}\label{sec:experiments}
+            Text before objects.
+            \begin{table}[t]
+            \resizebox{\columnwidth}{!}{
+            \begin{tabular}{lc}
+            Method & Acc \\
+            Ours & 99.0 \\
+            \end{tabular}
+            }
+            \caption{Main results.}
+            \label{tab:main}
+            \end{table}
+            \begin{equation}
+            L = -\sum_i y_i \log p_i
+            \label{eq:loss}
+            \end{equation}
+            \begin{figure}
+            \includegraphics[width=\linewidth]{figures/overview.pdf}
+            \caption{Overview figure.}
+            \label{fig:overview}
+            \end{figure}
+            Text after objects.
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_tex_source_paper(paper_id="2401.00008", source_path=tex_path)
+
+    assert parsed["availability"] == "available"
+    assert parsed["metrics"]["table_count"] == 1
+    assert parsed["metrics"]["equation_count"] == 1
+    assert parsed["metrics"]["figure_count"] == 1
+    table = parsed["tables"][0]
+    assert table["table_id"] == "tab:main"
+    assert table["caption"] == "Main results."
+    assert table["label"] == "tab:main"
+    assert table["section_id"] == "sec:experiments"
+    assert r"\begin{table}" in table["latex_source"]
+    assert "has_resizebox" in table["quality_flags"]
+    assert "has_math" not in table["quality_flags"]
+    equation = parsed["equations"][0]
+    assert equation["equation_id"] == "eq:loss"
+    assert equation["label"] == "eq:loss"
+    assert equation["section_id"] == "sec:experiments"
+    figure = parsed["figures"][0]
+    assert figure["figure_id"] == "fig:overview"
+    assert figure["graphics_paths"] == ["figures/overview.pdf"]
+    section_text = parsed["sections"][0]["plain_text"]
+    assert "Text before objects." in section_text
+    assert "Text after objects." in section_text
+    assert "Method & Acc" not in section_text
+    assert "L = -" not in section_text
