@@ -268,3 +268,65 @@ def test_parse_tex_source_paper_extracts_tables_figures_and_equations(
     assert "Text after objects." in section_text
     assert "Method & Acc" not in section_text
     assert "L = -" not in section_text
+
+
+def test_parse_tex_source_paper_extracts_section_tree_abstract_citations_and_bbl(
+    tmp_path: Path,
+) -> None:
+    from src.source_benchmark.tex_source_parser import parse_tex_source_paper
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "main.tex").write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \title{Knowledge Paper}
+            \begin{document}
+            \begin{abstract}
+            We cite prior work \citep{vaswani2017attention}.
+            \end{abstract}
+            \section{Method}\label{sec:method}
+            See \ref{tab:main}.
+            \subsection{Model}\label{sec:model}
+            Model text.
+            \appendix
+            \section{More Results}\label{sec:appendix}
+            Appendix text.
+            \bibliography{main}
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+    (source_dir / "main.bbl").write_text(
+        textwrap.dedent(
+            r"""
+            \begin{thebibliography}{1}
+            \bibitem{vaswani2017attention}
+            Ashish Vaswani et al. Attention is all you need.
+            \end{thebibliography}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_tex_source_paper(paper_id="2401.00009", source_path=source_dir)
+
+    assert parsed["title"] == "Knowledge Paper"
+    assert parsed["abstract"] == "We cite prior work \\citep{vaswani2017attention}."
+    assert [section["section_id"] for section in parsed["sections"]] == [
+        "sec:method",
+        "sec:model",
+        "sec:appendix",
+    ]
+    assert parsed["sections"][1]["parent_id"] == "sec:method"
+    assert parsed["sections"][1]["heading_path"] == ["Method", "Model"]
+    assert parsed["sections"][2]["normalized_type"] == "appendix"
+    assert parsed["citations"] == [
+        {"key": "vaswani2017attention", "command": "citep", "section_id": ""}
+    ]
+    assert parsed["bibliography"][0]["key"] == "vaswani2017attention"
+    assert "Attention is all you need" in parsed["bibliography"][0]["raw_text"]
+    assert parsed["metrics"]["citation_count"] == 1
+    assert parsed["metrics"]["bibliography_entry_count"] == 1

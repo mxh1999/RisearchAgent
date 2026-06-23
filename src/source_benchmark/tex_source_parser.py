@@ -15,6 +15,11 @@ PARSER_NAME = "tex_source_parser"
 PARSER_VERSION = "0.1.0"
 SOURCE_TYPE = "arxiv_tex"
 _INPUT_RE = re.compile(r"\\(?:input|include)\s*\{([^{}]+)\}")
+_SECTION_RE = re.compile(
+    r"\\(?P<cmd>part|chapter|section|subsection|subsubsection|paragraph|subparagraph)"
+    r"\*?\s*\{"
+)
+_CITE_RE = re.compile(r"\\(?P<cmd>cite\w*)\s*(?:\[[^\]]*\]\s*)*\{(?P<keys>[^{}]+)\}")
 _BEGIN_ENV_RE = re.compile(r"\\begin\{([^{}]+)\}")
 _LABEL_RE = re.compile(r"\\label\s*\{([^{}]+)\}")
 _GRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^{}]+)\}")
@@ -45,6 +50,15 @@ _EQUATION_ENVS = {
     "multline*",
 }
 _KNOWN_ENVS = _TABLE_ENVS | _TABULAR_ENVS | _FIGURE_ENVS | _EQUATION_ENVS
+_SECTION_LEVELS = {
+    "part": 0,
+    "chapter": 0,
+    "section": 1,
+    "subsection": 2,
+    "subsubsection": 3,
+    "paragraph": 4,
+    "subparagraph": 5,
+}
 
 
 @dataclass(frozen=True)
@@ -198,6 +212,7 @@ def _parse_materialized_source(
         object_spans=object_spans,
     )
     title = _extract_title(flattened.text)
+    abstract = _extract_abstract(flattened.text)
     tables = _build_tables(
         flattened=flattened,
         source_root=source_root,
@@ -224,13 +239,17 @@ def _parse_materialized_source(
         main_tex_file=main_tex_file,
         pdf_path=pdf_path,
         title=title,
-        abstract="",
+        abstract=abstract,
         sections=public_sections,
         tables=tables,
         equations=equations,
         figures=figures,
-        citations=[],
-        bibliography=[],
+        citations=_extract_citations(flattened.text, sections),
+        bibliography=_extract_bibliography(
+            flattened_text=flattened.text,
+            source_root=source_root,
+            main_tex_file=main_tex_file,
+        ),
         warnings=warnings,
         unresolved_input_count=flattened.unresolved_input_count,
         partial_environment_count=sum(1 for span in spans if span.partial),
@@ -514,9 +533,12 @@ def _extract_sections_minimal(
     object_spans: list[SourceSpan],
 ) -> list[dict[str, Any]]:
     text = flattened.text
-    matches = list(re.finditer(r"\\section\*?\s*\{", text))
+    matches = list(_SECTION_RE.finditer(text))
     sections: list[dict[str, Any]] = []
+    stack: list[dict[str, Any]] = []
     for order, match in enumerate(matches):
+        command = match.group("cmd")
+        level = _SECTION_LEVELS[command]
         title_open = text.find("{", match.end() - 1)
         title_close = _find_matching_brace(text, title_open)
         if title_close < 0:
@@ -546,25 +568,41 @@ def _extract_sections_minimal(
         )
         section_label = _extract_label(text[title_close:next_start])
         section_id = section_label or f"sec-{order + 1:04d}"
+        while stack and int(stack[-1]["level"]) >= level:
+            stack.pop()
+        parent_id = str(stack[-1]["section_id"]) if stack else None
+        heading_path = [str(item["title"]) for item in stack] + [title]
+        appendix = _is_appendix_section(text, match.start(), title)
+        normalized_type = "appendix" if appendix else _normalize_section_type(title)
+        section = {
+            "section_id": section_id,
+            "title": title,
+            "level": level,
+            "normalized_type": normalized_type,
+            "parent_id": parent_id,
+            "order": order,
+            "heading_path": heading_path,
+            "latex_source": latex_source,
+            "plain_text": plain_text,
+            "source_file": source_file,
+            "line_start": line_start,
+            "line_end": line_end,
+            "_span_start": match.start(),
+            "_span_end": next_start,
+        }
         sections.append(
-            {
-                "section_id": section_id,
-                "title": title,
-                "level": 1,
-                "normalized_type": _normalize_section_type(title),
-                "parent_id": None,
-                "order": order,
-                "heading_path": [title],
-                "latex_source": latex_source,
-                "plain_text": plain_text,
-                "source_file": source_file,
-                "line_start": line_start,
-                "line_end": line_end,
-                "_span_start": match.start(),
-                "_span_end": next_start,
-            }
+            section
         )
+        stack.append(section)
     return sections
+
+
+def _is_appendix_section(text: str, section_start: int, title: str) -> bool:
+    appendix_position = text.find(r"\appendix")
+    if appendix_position >= 0 and appendix_position < section_start:
+        return True
+    normalized_title = title.strip().lower()
+    return normalized_title.startswith(("appendix", "supplement"))
 
 
 def _public_section(section: dict[str, Any]) -> dict[str, Any]:
@@ -814,10 +852,14 @@ def _build_figures(
 
 
 def _section_id_for_position(sections: list[dict[str, Any]], position: int) -> str:
+    if not sections:
+        return ""
+    if position < int(sections[0]["_span_start"]):
+        return ""
     for section in sections:
         if section["_span_start"] <= position < section["_span_end"]:
             return str(section["section_id"])
-    return sections[-1]["section_id"] if sections else ""
+    return str(sections[-1]["section_id"])
 
 
 def _extract_caption(latex_source: str) -> str:
@@ -868,6 +910,112 @@ def _quality_flags_for_latex(
     if kind == "table" and re.search(r"(?<!\\)\$|\\\(|\\\[", latex_source):
         flags.append("has_math")
     return flags
+
+
+def _extract_abstract(text: str) -> str:
+    match = re.search(r"\\begin\{abstract\}", text)
+    if match is None:
+        return ""
+    end_match = re.search(r"\\end\{abstract\}", text[match.end():])
+    if end_match is None:
+        return ""
+    raw = text[match.end():match.end() + end_match.start()]
+    return _compact_latex_whitespace(raw)
+
+
+def _extract_citations(text: str, sections: list[dict[str, Any]]) -> list[dict[str, str]]:
+    citations: list[dict[str, str]] = []
+    for match in _CITE_RE.finditer(text):
+        command = match.group("cmd")
+        for key in match.group("keys").split(","):
+            normalized_key = key.strip()
+            if not normalized_key:
+                continue
+            citations.append(
+                {
+                    "key": normalized_key,
+                    "command": command,
+                    "section_id": _section_id_for_position(sections, match.start()),
+                }
+            )
+    return citations
+
+
+def _extract_bibliography(
+    *,
+    flattened_text: str,
+    source_root: Path,
+    main_tex_file: Path,
+) -> list[dict[str, str]]:
+    bibliography: list[dict[str, str]] = []
+    bibliography.extend(
+        _extract_bibitems_from_text(
+            text=flattened_text,
+            source_file=_relative_path(main_tex_file, source_root),
+        )
+    )
+    seen_keys = {entry["key"] for entry in bibliography}
+    for bbl_path in _candidate_bbl_files(flattened_text, source_root, main_tex_file):
+        for entry in _extract_bibitems_from_text(
+            text=_read_text(bbl_path),
+            source_file=_relative_path(bbl_path, source_root),
+        ):
+            if entry["key"] in seen_keys:
+                continue
+            bibliography.append(entry)
+            seen_keys.add(entry["key"])
+    return bibliography
+
+
+def _candidate_bbl_files(
+    flattened_text: str,
+    source_root: Path,
+    main_tex_file: Path,
+) -> list[Path]:
+    candidates: list[Path] = []
+    main_bbl = main_tex_file.with_suffix(".bbl")
+    if main_bbl.exists():
+        candidates.append(main_bbl)
+    for match in re.finditer(r"\\bibliography\s*\{([^{}]+)\}", flattened_text):
+        for raw_name in match.group(1).split(","):
+            name = raw_name.strip()
+            if not name:
+                continue
+            path = source_root / name
+            if path.suffix.lower() != ".bbl":
+                path = path.with_suffix(".bbl")
+            if path.exists():
+                candidates.append(path)
+    candidates.extend(sorted(source_root.rglob("*.bbl")))
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved not in seen and path.exists():
+            unique.append(path)
+            seen.add(resolved)
+    return unique
+
+
+def _extract_bibitems_from_text(text: str, source_file: str) -> list[dict[str, str]]:
+    matches = list(re.finditer(r"\\bibitem(?:\[[^\]]*\])?\s*\{([^{}]+)\}", text))
+    entries: list[dict[str, str]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        raw_text = text[match.end():end]
+        raw_text = re.sub(r"\\end\{thebibliography\}.*$", "", raw_text, flags=re.DOTALL)
+        entries.append(
+            {
+                "key": match.group(1).strip(),
+                "raw_text": _compact_latex_whitespace(raw_text),
+                "source_file": source_file,
+            }
+        )
+    return entries
+
+
+def _compact_latex_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _find_matching_brace(text: str, open_pos: int) -> int:
