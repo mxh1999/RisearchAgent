@@ -112,34 +112,35 @@ def parse_tex_source_paper(
         )
 
     warnings: list[str] = []
-    try:
-        if source_path.is_dir() or source_path.suffix.lower() == ".tex":
-            source_root = source_path if source_path.is_dir() else source_path.parent
-            return _parse_materialized_source(
-                paper_id=paper_id,
-                source_path=source_path,
-                source_root=source_root,
-                pdf_path=pdf_path,
-                warnings=warnings,
-            )
-        with tempfile.TemporaryDirectory() as temp_dir:
-            source_root = Path(temp_dir) / "source"
-            source_root.mkdir()
-            _materialize_source(source_path, source_root)
-            return _parse_materialized_source(
-                paper_id=paper_id,
-                source_path=source_path,
-                source_root=source_root,
-                pdf_path=pdf_path,
-                warnings=warnings,
-            )
-    except Exception as exc:
-        return _empty_parsed_paper(
+    if source_path.is_dir() or source_path.suffix.lower() == ".tex":
+        source_root = source_path if source_path.is_dir() else source_path.parent
+        return _parse_materialized_source(
             paper_id=paper_id,
             source_path=source_path,
+            source_root=source_root,
             pdf_path=pdf_path,
-            availability="archive_extract_failed",
-            warnings=[f"Source archive extraction failed: {exc}"],
+            warnings=warnings,
+        )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        source_root = Path(temp_dir) / "source"
+        source_root.mkdir()
+        try:
+            _materialize_source(source_path, source_root)
+        except Exception as exc:
+            return _empty_parsed_paper(
+                paper_id=paper_id,
+                source_path=source_path,
+                pdf_path=pdf_path,
+                availability="archive_extract_failed",
+                warnings=[f"Source archive extraction failed: {exc}"],
+            )
+        return _parse_materialized_source(
+            paper_id=paper_id,
+            source_path=source_path,
+            source_root=source_root,
+            pdf_path=pdf_path,
+            warnings=warnings,
         )
 
 
@@ -1084,10 +1085,6 @@ def main() -> None:
     print(output_path)
 
 
-if __name__ == "__main__":
-    main()
-
-
 def _find_matching_brace(text: str, open_pos: int) -> int:
     if open_pos < 0 or open_pos >= len(text) or text[open_pos] != "{":
         return -1
@@ -1159,3 +1156,7 @@ def _clean_latex_text(text: str) -> str:
     text = text.replace(r"\_", "_").replace(r"\%", "%").replace(r"\&", "&")
     text = text.replace("{", "").replace("}", "")
     return re.sub(r"\s+", " ", text).strip()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import gzip
+import os
+import subprocess
+import sys
 import tarfile
 import textwrap
 from pathlib import Path
@@ -395,3 +398,57 @@ def test_write_parsed_tex_source_paper_writes_json(tmp_path: Path) -> None:
     assert raw["paper_id"] == "2401.00011"
     assert raw["source_type"] == "arxiv_tex"
     assert raw["title"] == "Writable"
+
+
+def test_tex_source_parser_module_cli_accepts_extensionless_tar(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "main.tex").write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \title{CLI Paper}
+            \begin{document}
+            \section{Intro}
+            Text.
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+    source_archive = tmp_path / "source.eprint"
+    with tarfile.open(source_archive, "w") as archive:
+        archive.add(source_dir, arcname="paper")
+    output_dir = tmp_path / "parsed"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "."
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.source_benchmark.tex_source_parser",
+            "--paper-id",
+            "2401.00012",
+            "--source",
+            str(source_archive),
+            "--output-dir",
+            str(output_dir),
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    output_path = output_dir / "2401.00012.tex.parsed.json"
+    assert output_path.exists()
+    import json
+
+    raw = json.loads(output_path.read_text(encoding="utf-8"))
+    assert raw["availability"] == "available"
+    assert raw["metrics"]["section_count"] == 1
