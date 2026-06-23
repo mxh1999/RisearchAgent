@@ -1,18 +1,35 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import gzip
+import json
 import re
 import tarfile
 import tempfile
 import zipfile
-import json
 from pathlib import Path
 from typing import Any
 
 PARSER_NAME = "tex_source_parser"
 PARSER_VERSION = "0.1.0"
 SOURCE_TYPE = "arxiv_tex"
+_INPUT_RE = re.compile(r"\\(?:input|include)\s*\{([^{}]+)\}")
+
+
+@dataclass(frozen=True)
+class SourceSegment:
+    source_file: Path
+    flat_start: int
+    flat_end: int
+    line_offset: int
+
+
+@dataclass(frozen=True)
+class FlattenedSource:
+    text: str
+    segments: list[SourceSegment]
+    unresolved_input_count: int
 
 
 def parse_tex_source_paper(
@@ -126,13 +143,19 @@ def _parse_materialized_source(
             warnings=warnings + [f"No TeX entrypoint found under: {source_root}"],
         )
 
-    text = _read_text(main_tex_file)
+    flattened = _flatten_tex_file(
+        path=main_tex_file,
+        source_root=source_root,
+        warnings=warnings,
+        seen=set(),
+        flat_offset=0,
+    )
     sections = _extract_sections_minimal(
-        text=text,
+        flattened=flattened,
         main_file=main_tex_file,
         source_root=source_root,
     )
-    title = _extract_title(text)
+    title = _extract_title(flattened.text)
     return _parsed_paper(
         paper_id=paper_id,
         source_path=source_path,
@@ -148,7 +171,7 @@ def _parse_materialized_source(
         citations=[],
         bibliography=[],
         warnings=warnings,
-        unresolved_input_count=0,
+        unresolved_input_count=flattened.unresolved_input_count,
         partial_environment_count=0,
     )
 
@@ -311,6 +334,106 @@ def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
+def _flatten_tex_file(
+    *,
+    path: Path,
+    source_root: Path,
+    warnings: list[str],
+    seen: set[Path],
+    flat_offset: int,
+) -> FlattenedSource:
+    del source_root
+    resolved = path.resolve()
+    if resolved in seen:
+        warnings.append(f"Recursive input skipped: {path}")
+        return FlattenedSource(text="", segments=[], unresolved_input_count=0)
+    seen.add(resolved)
+
+    text = _strip_comments_preserve_lines(_read_text(path))
+    pieces: list[str] = []
+    segments: list[SourceSegment] = []
+    unresolved_input_count = 0
+    cursor = 0
+    current_flat = flat_offset
+    for match in _INPUT_RE.finditer(text):
+        prefix = text[cursor:match.start()]
+        if prefix:
+            pieces.append(prefix)
+            segments.append(
+                SourceSegment(
+                    source_file=path,
+                    flat_start=current_flat,
+                    flat_end=current_flat + len(prefix),
+                    line_offset=_line_number_for_position(text, cursor),
+                )
+            )
+            current_flat += len(prefix)
+
+        child = _resolve_input_path(path, match.group(1))
+        if child is None:
+            raw_command = match.group(0)
+            warnings.append(f"Unresolved input in {path}: {raw_command}")
+            pieces.append(raw_command)
+            segments.append(
+                SourceSegment(
+                    source_file=path,
+                    flat_start=current_flat,
+                    flat_end=current_flat + len(raw_command),
+                    line_offset=_line_number_for_position(text, match.start()),
+                )
+            )
+            current_flat += len(raw_command)
+            unresolved_input_count += 1
+        else:
+            child_flattened = _flatten_tex_file(
+                path=child,
+                source_root=child.parent,
+                warnings=warnings,
+                seen=seen,
+                flat_offset=current_flat,
+            )
+            pieces.append(child_flattened.text)
+            segments.extend(child_flattened.segments)
+            current_flat += len(child_flattened.text)
+            unresolved_input_count += child_flattened.unresolved_input_count
+        cursor = match.end()
+
+    suffix = text[cursor:]
+    if suffix:
+        pieces.append(suffix)
+        segments.append(
+            SourceSegment(
+                source_file=path,
+                flat_start=current_flat,
+                flat_end=current_flat + len(suffix),
+                line_offset=_line_number_for_position(text, cursor),
+            )
+        )
+    return FlattenedSource(
+        text="".join(pieces),
+        segments=segments,
+        unresolved_input_count=unresolved_input_count,
+    )
+
+
+def _strip_comments_preserve_lines(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        lines.append(re.sub(r"(?<!\\)%.*", "", line))
+    return "\n".join(lines)
+
+
+def _resolve_input_path(path: Path, raw_name: str) -> Path | None:
+    raw = raw_name.strip()
+    candidates = [path.parent / raw]
+    if Path(raw).suffix == "":
+        candidates.insert(0, path.parent / f"{raw}.tex")
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
 def _extract_title(text: str) -> str:
     match = re.search(r"\\title(?:\[[^\]]*\])?\s*\{", text)
     if match is None:
@@ -324,10 +447,11 @@ def _extract_title(text: str) -> str:
 
 def _extract_sections_minimal(
     *,
-    text: str,
+    flattened: FlattenedSource,
     main_file: Path,
     source_root: Path,
 ) -> list[dict[str, Any]]:
+    text = flattened.text
     matches = list(re.finditer(r"\\section\*?\s*\{", text))
     sections: list[dict[str, Any]] = []
     for order, match in enumerate(matches):
@@ -337,10 +461,21 @@ def _extract_sections_minimal(
             continue
         next_start = matches[order + 1].start() if order + 1 < len(matches) else len(text)
         title = _clean_latex_text(text[title_open + 1:title_close - 1])
-        latex_source = text[match.start():next_start].strip()
+        source_start = 0 if order == 0 else match.start()
+        latex_source = text[source_start:next_start].strip()
         plain_text = _clean_latex_text(text[title_close:next_start])
-        line_start = _line_number_for_position(text, match.start())
-        line_end = _line_number_for_position(text, next_start)
+        source_file, line_start = _provenance_for_position(
+            flattened=flattened,
+            position=match.start(),
+            fallback=main_file,
+            source_root=source_root,
+        )
+        _, line_end = _provenance_for_position(
+            flattened=flattened,
+            position=max(match.start(), next_start - 1),
+            fallback=main_file,
+            source_root=source_root,
+        )
         section_id = f"sec-{order + 1:04d}"
         sections.append(
             {
@@ -353,7 +488,7 @@ def _extract_sections_minimal(
                 "heading_path": [title],
                 "latex_source": latex_source,
                 "plain_text": plain_text,
-                "source_file": _relative_path(main_file, source_root),
+                "source_file": source_file,
                 "line_start": line_start,
                 "line_end": line_end,
             }
@@ -383,6 +518,21 @@ def _find_matching_brace(text: str, open_pos: int) -> int:
 
 def _line_number_for_position(text: str, position: int) -> int:
     return text.count("\n", 0, max(0, position)) + 1
+
+
+def _provenance_for_position(
+    *,
+    flattened: FlattenedSource,
+    position: int,
+    fallback: Path,
+    source_root: Path,
+) -> tuple[str, int]:
+    for segment in flattened.segments:
+        if segment.flat_start <= position < segment.flat_end:
+            local_prefix = flattened.text[segment.flat_start:position]
+            line_number = segment.line_offset + local_prefix.count("\n")
+            return _relative_path(segment.source_file, source_root), line_number
+    return _relative_path(fallback, source_root), 1
 
 
 def _relative_path(path: Path, root: Path) -> str:

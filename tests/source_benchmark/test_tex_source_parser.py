@@ -130,3 +130,73 @@ def test_parse_tex_source_paper_accepts_single_gzip_tex(tmp_path: Path) -> None:
     assert parsed["main_tex_file"].endswith(".tex")
     assert parsed["title"] == "Gzip Paper"
     assert parsed["metrics"]["section_count"] == 1
+
+
+def test_parse_tex_source_paper_resolves_inputs_with_source_provenance(
+    tmp_path: Path,
+) -> None:
+    from src.source_benchmark.tex_source_parser import parse_tex_source_paper
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "main.tex").write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \title{Multi File Paper}
+            \begin{document}
+            \input{sections/intro}
+            \include{sections/method}
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+    sections = source_dir / "sections"
+    sections.mkdir()
+    (sections / "intro.tex").write_text(
+        r"\section{Introduction}" + "\nIntro text.\n",
+        encoding="utf-8",
+    )
+    (sections / "method.tex").write_text(
+        r"\section{Method}" + "\nMethod text.\n",
+        encoding="utf-8",
+    )
+
+    parsed = parse_tex_source_paper(paper_id="2401.00006", source_path=source_dir)
+
+    assert parsed["availability"] == "available"
+    assert [section["title"] for section in parsed["sections"]] == [
+        "Introduction",
+        "Method",
+    ]
+    assert parsed["sections"][0]["source_file"].endswith("sections/intro.tex")
+    assert parsed["sections"][1]["source_file"].endswith("sections/method.tex")
+    assert parsed["metrics"]["unresolved_input_count"] == 0
+
+
+def test_parse_tex_source_paper_preserves_unresolved_inputs(tmp_path: Path) -> None:
+    from src.source_benchmark.tex_source_parser import parse_tex_source_paper
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "main.tex").write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \begin{document}
+            \input{missing/intro}
+            \section{Fallback}
+            Text.
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_tex_source_paper(paper_id="2401.00007", source_path=source_dir)
+
+    assert parsed["availability"] == "available"
+    assert parsed["metrics"]["unresolved_input_count"] == 1
+    assert any("Unresolved input" in warning for warning in parsed["warnings"])
+    assert r"\input{missing/intro}" in parsed["sections"][0]["latex_source"]
