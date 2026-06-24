@@ -456,7 +456,6 @@ def _flatten_tex_file(
     seen: set[Path],
     flat_offset: int,
 ) -> FlattenedSource:
-    del source_root
     resolved = path.resolve()
     if resolved in seen:
         warnings.append(f"Recursive input skipped: {path}")
@@ -483,7 +482,7 @@ def _flatten_tex_file(
             )
             current_flat += len(prefix)
 
-        child = _resolve_input_path(path, match.group(1))
+        child = _resolve_input_path(path, source_root, match.group(1))
         if child is None:
             raw_command = match.group(0)
             warnings.append(f"Unresolved input in {path}: {raw_command}")
@@ -501,7 +500,7 @@ def _flatten_tex_file(
         else:
             child_flattened = _flatten_tex_file(
                 path=child,
-                source_root=child.parent,
+                source_root=source_root,
                 warnings=warnings,
                 seen=seen,
                 flat_offset=current_flat,
@@ -537,11 +536,12 @@ def _strip_comments_preserve_lines(text: str) -> str:
     return "\n".join(lines)
 
 
-def _resolve_input_path(path: Path, raw_name: str) -> Path | None:
+def _resolve_input_path(path: Path, source_root: Path, raw_name: str) -> Path | None:
     raw = raw_name.strip()
-    candidates = [path.parent / raw]
+    candidates = [path.parent / raw, source_root / raw]
     if Path(raw).suffix == "":
         candidates.insert(0, path.parent / f"{raw}.tex")
+        candidates.insert(1, source_root / f"{raw}.tex")
     for candidate in candidates:
         if candidate.exists() and candidate.is_file():
             return candidate
