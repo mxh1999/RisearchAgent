@@ -579,7 +579,7 @@ def _extract_sections_minimal(
             continue
         next_start = matches[order + 1].start() if order + 1 < len(matches) else len(text)
         title = _clean_latex_text(text[title_open + 1:title_close - 1])
-        source_start = 0 if order == 0 else match.start()
+        source_start = match.start()
         latex_source = text[source_start:next_start].strip()
         body_text = _remove_spans(
             text=text,

@@ -202,7 +202,39 @@ def test_parse_tex_source_paper_preserves_unresolved_inputs(tmp_path: Path) -> N
     assert parsed["availability"] == "available"
     assert parsed["metrics"]["unresolved_input_count"] == 1
     assert any("Unresolved input" in warning for warning in parsed["warnings"])
-    assert r"\input{missing/intro}" in parsed["sections"][0]["latex_source"]
+    assert r"\input{missing/intro}" not in parsed["sections"][0]["latex_source"]
+
+
+def test_parse_tex_source_paper_does_not_put_preamble_in_first_section(
+    tmp_path: Path,
+) -> None:
+    from src.source_benchmark.tex_source_parser import parse_tex_source_paper
+
+    tex_path = tmp_path / "paper.tex"
+    tex_path.write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \usepackage{amsmath}
+            \usepackage{booktabs}
+            \title{Preamble Boundary}
+            \begin{document}
+            \maketitle
+            \section{Introduction}
+            Intro text.
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_tex_source_paper(paper_id="2401.00013", source_path=tex_path)
+
+    first_section = parsed["sections"][0]
+    assert first_section["title"] == "Introduction"
+    assert r"\section{Introduction}" in first_section["latex_source"]
+    assert r"\usepackage{amsmath}" not in first_section["latex_source"]
+    assert r"\documentclass{article}" not in first_section["latex_source"]
 
 
 def test_parse_tex_source_paper_extracts_tables_figures_and_equations(
