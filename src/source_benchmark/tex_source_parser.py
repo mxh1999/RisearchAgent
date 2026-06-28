@@ -577,7 +577,11 @@ def _extract_sections_minimal(
         title_close = _find_matching_brace(text, title_open)
         if title_close < 0:
             continue
-        next_start = matches[order + 1].start() if order + 1 < len(matches) else len(text)
+        next_start = (
+            matches[order + 1].start()
+            if order + 1 < len(matches)
+            else _document_end_position(text, title_close)
+        )
         title = _clean_latex_text(text[title_open + 1:title_close - 1])
         source_start = match.start()
         latex_source = text[source_start:next_start].strip()
@@ -600,7 +604,11 @@ def _extract_sections_minimal(
             fallback=main_file,
             source_root=source_root,
         )
-        section_label = _extract_label(text[title_close:next_start])
+        section_label = _extract_section_label_after_heading(
+            text=text,
+            start=title_close,
+            end=next_start,
+        )
         section_id = section_label or f"sec-{order + 1:04d}"
         while stack and int(stack[-1]["level"]) >= level:
             stack.pop()
@@ -637,6 +645,23 @@ def _is_appendix_section(text: str, section_start: int, title: str) -> bool:
         return True
     normalized_title = title.strip().lower()
     return normalized_title.startswith(("appendix", "supplement"))
+
+
+def _document_end_position(text: str, start: int) -> int:
+    end_match = re.search(r"\\end\{document\}", text[start:])
+    return start + end_match.start() if end_match is not None else len(text)
+
+
+def _extract_section_label_after_heading(
+    *,
+    text: str,
+    start: int,
+    end: int,
+) -> str:
+    whitespace = re.match(r"\s*", text[start:end])
+    position = start + (whitespace.end() if whitespace is not None else 0)
+    match = _LABEL_RE.match(text, position)
+    return match.group(1).strip() if match is not None else ""
 
 
 def _public_section(section: dict[str, Any]) -> dict[str, Any]:
@@ -1151,6 +1176,7 @@ def _normalize_section_type(title: str) -> str:
 
 def _clean_latex_text(text: str) -> str:
     text = text.replace("~", " ")
+    text = re.sub(r"\\(?:begin|end)\s*\{[^{}]*\}", " ", text)
     text = re.sub(r"\\(?:textbf|emph|textit|small|large|mathrm|mathbf)\s*\{([^{}]*)\}", r"\1", text)
     text = re.sub(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?", "", text)
     text = text.replace(r"\_", "_").replace(r"\%", "%").replace(r"\&", "&")

@@ -237,6 +237,44 @@ def test_parse_tex_source_paper_does_not_put_preamble_in_first_section(
     assert r"\documentclass{article}" not in first_section["latex_source"]
 
 
+def test_parse_tex_source_paper_does_not_use_object_label_as_section_id(
+    tmp_path: Path,
+) -> None:
+    from src.source_benchmark.tex_source_parser import parse_tex_source_paper
+
+    tex_path = tmp_path / "paper.tex"
+    tex_path.write_text(
+        textwrap.dedent(
+            r"""
+            \documentclass{article}
+            \begin{document}
+            \section{Experiments}
+            Text before table.
+            \begin{table}
+            \caption{Results.}
+            \label{tab:results}
+            \begin{tabular}{lc}
+            Method & Score \\
+            Ours & 99.0 \\
+            \end{tabular}
+            \end{table}
+            \end{document}
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = parse_tex_source_paper(paper_id="2401.00014", source_path=tex_path)
+
+    section = parsed["sections"][0]
+    table = parsed["tables"][0]
+    assert section["section_id"] == "sec-0001"
+    assert table["table_id"] == "tab:results"
+    assert table["section_id"] == "sec-0001"
+    assert "Text before table." in section["plain_text"]
+    assert "document" not in section["plain_text"]
+
+
 def test_parse_tex_source_paper_extracts_tables_figures_and_equations(
     tmp_path: Path,
 ) -> None:
