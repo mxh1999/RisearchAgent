@@ -1,10 +1,77 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from src.config import load_config
+
+
+def _minimal_config(llm: dict) -> dict:
+    return {
+        "topics": [
+            {
+                "name": "Topic",
+                "query": "test",
+                "categories": ["cs.AI"],
+                "research_profile": "profile",
+            }
+        ],
+        "llm": llm,
+    }
+
+
+def test_load_config_defaults_to_gpt_provider(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RISEARCHAGENT_API_KEY", "test-key")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(_minimal_config({})),
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.llm.response_format == "gpt"
+    assert config.llm.base_url == "https://api.ikuncode.cc"
+    assert config.llm.api_key_env == "RISEARCHAGENT_API_KEY"
+    assert config.llm.filter_model == "gpt-5.6-sol"
+    assert config.llm.reader_model == "gpt-5.6-sol"
+    assert config.llm.embedding_model == ""
+    assert config.llm.api_key == "test-key"
+
+
+def test_normalize_llm_config_defaults_to_gpt_provider(monkeypatch) -> None:
+    from src.llm.client import normalize_llm_config
+
+    monkeypatch.setenv("RISEARCHAGENT_API_KEY", "test-key")
+
+    config = normalize_llm_config(
+        SimpleNamespace(
+            filter_model="gpt-5.6-sol",
+            reader_model="gpt-5.6-sol",
+        )
+    )
+
+    assert config.response_format == "gpt"
+    assert config.base_url == "https://api.ikuncode.cc"
+    assert config.api_key_env == "RISEARCHAGENT_API_KEY"
+    assert config.embedding_model == ""
+    assert config.api_key == "test-key"
+
+
+def test_example_config_uses_default_gpt_provider() -> None:
+    raw = yaml.safe_load(Path("example.yaml").read_text(encoding="utf-8"))
+
+    assert raw["llm"] == {
+        "response_format": "gpt",
+        "base_url": "https://api.ikuncode.cc",
+        "api_key_env": "RISEARCHAGENT_API_KEY",
+        "filter_model": "gpt-5.6-sol",
+        "reader_model": "gpt-5.6-sol",
+        "max_concurrent": 5,
+        "temperature": 0.3,
+    }
 
 
 def test_load_config_reads_custom_gpt_provider(tmp_path, monkeypatch) -> None:

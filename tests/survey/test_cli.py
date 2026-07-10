@@ -150,6 +150,8 @@ def test_survey_synthesize_rejects_topic_id_path_mismatch_before_writes(
                 api_key="",
                 max_concurrent=1,
                 temperature=0.1,
+                response_format="gemini",
+                api_key_env="GEMINI_API_KEY",
             )
         ),
     )
@@ -186,6 +188,8 @@ def test_survey_synthesize_reports_missing_topic_before_api_key(
                 api_key="",
                 max_concurrent=1,
                 temperature=0.1,
+                response_format="gemini",
+                api_key_env="GEMINI_API_KEY",
             )
         ),
     )
@@ -296,6 +300,8 @@ def test_survey_synthesize_preserves_topic_yaml_bytes(tmp_path, monkeypatch) -> 
                 api_key="",
                 max_concurrent=1,
                 temperature=0.1,
+                response_format="gemini",
+                api_key_env="GEMINI_API_KEY",
             )
         ),
     )

@@ -10,11 +10,10 @@ topics:
     filters to decide whether papers are worth reading.
 llm:
   response_format: gpt
-  base_url: https://your-provider.example.com
+  base_url: https://api.ikuncode.cc
   api_key_env: RISEARCHAGENT_API_KEY
-  filter_model: your-fast-model
-  reader_model: your-strong-model
-  embedding_model: legacy-unused
+  filter_model: gpt-5.6-sol
+  reader_model: gpt-5.6-sol
   max_concurrent: 5
   temperature: 0.3
 scraper:
@@ -25,6 +24,5 @@ filter:
   relevance_threshold: 6
   borderline_min: 4
 db_path: data/papers.db
-chroma_path: data/chroma
 pdf_dir: data/pdfs
 sota_dir: data/sota

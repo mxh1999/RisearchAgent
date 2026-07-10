@@ -197,6 +197,8 @@ def test_sota_update_validates_local_inputs_before_api_key(
                 api_key="",
                 max_concurrent=1,
                 temperature=0.1,
+                response_format="gemini",
+                api_key_env="GEMINI_API_KEY",
             )
         ),
     )
@@ -248,6 +250,8 @@ def test_sota_update_uses_fake_llm_for_canonicalization(tmp_path: Path, monkeypa
                 api_key="",
                 max_concurrent=1,
                 temperature=0.1,
+                response_format="gemini",
+                api_key_env="GEMINI_API_KEY",
             )
         ),
     )

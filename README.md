@@ -40,8 +40,8 @@ pip install -r requirements.txt
 cp .env.example .env       # add your RISEARCHAGENT_API_KEY
 cp example.yaml config.yaml # add your provider base_url and model names
 
-# Interactive onboarding - builds your config.yaml via conversation
-python run.py onboard
+# Refine a topic with the default GPT provider
+python run.py survey refine "your research direction"
 
 # Or manually edit config.yaml with your research topics
 ```
@@ -49,7 +49,7 @@ python run.py onboard
 ## Usage
 
 ```bash
-# Legacy global pipeline
+# Legacy Gemini-only global pipeline
 python run.py pipeline
 
 # Legacy stages
@@ -63,7 +63,7 @@ python run.py stats
 python run.py export [output.json]
 python run.py import data.json         # add --merge to upsert
 
-# Onboarding
+# Legacy Gemini-only onboarding
 python run.py onboard
 python run.py onboard --refine
 ```
@@ -108,15 +108,15 @@ If the source archive is unavailable or cannot be parsed, ingestion continues wi
 cp example.yaml config.yaml
 ```
 
-Set `RISEARCHAGENT_API_KEY` in `.env`, then edit `config.yaml` with your provider base URL and model names. For OpenAI-compatible wrappers, use:
+Set `RISEARCHAGENT_API_KEY` in `.env`. The default provider uses an OpenAI-compatible Chat Completions API:
 
 ```yaml
 llm:
   response_format: gpt
-  base_url: https://your-provider.example.com
+  base_url: https://api.ikuncode.cc
   api_key_env: RISEARCHAGENT_API_KEY
-  filter_model: your-fast-model
-  reader_model: your-strong-model
+  filter_model: gpt-5.6-sol
+  reader_model: gpt-5.6-sol
 ```
 
 `response_format` selects the API dialect: `gpt` for OpenAI-compatible chat completions, `claude` for Anthropic-compatible messages, and `gemini` for Gemini-native calls.
@@ -134,9 +134,7 @@ Topic workflows primarily use `topic.yaml` files created under `data/topics/<top
 
 | Component | Choice |
 |-----------|--------|
-| LLM | Configurable GPT-compatible, Claude-compatible, or Gemini-compatible chat model |
+| LLM | `gpt-5.6-sol` through an OpenAI-compatible provider by default |
 | PDF Extraction | `pymupdf4llm` with PyMuPDF fallback |
 | Table Extraction | arXiv TeX source archives when available |
-| Vector Store | ChromaDB |
 | Database | SQLite via aiosqlite |
-| Embeddings | Gemini Embedding |

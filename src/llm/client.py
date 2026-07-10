@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 from typing import Any, Optional, Protocol
 
-from src.config import LLMConfig
+from src.config import (
+    DEFAULT_LLM_API_KEY_ENV,
+    DEFAULT_LLM_BASE_URL,
+    DEFAULT_LLM_RESPONSE_FORMAT,
+    LLMConfig,
+)
 
 
 class LLMClient(Protocol):
@@ -47,9 +52,13 @@ def create_llm_client(config: LLMConfig) -> LLMClient:
 
 def normalize_llm_config(config) -> LLMConfig:
     """Return a complete LLMConfig from real config or test doubles."""
-    response_format = getattr(config, "response_format", "gemini")
+    response_format = getattr(
+        config, "response_format", DEFAULT_LLM_RESPONSE_FORMAT
+    )
     default_api_key_env = (
-        "GEMINI_API_KEY" if response_format == "gemini" else "RISEARCHAGENT_API_KEY"
+        "GEMINI_API_KEY"
+        if response_format == "gemini"
+        else DEFAULT_LLM_API_KEY_ENV
     )
     api_key_env = getattr(config, "api_key_env", default_api_key_env)
     api_key = getattr(config, "api_key", "") or os.environ.get(api_key_env, "")
@@ -61,6 +70,6 @@ def normalize_llm_config(config) -> LLMConfig:
         max_concurrent=getattr(config, "max_concurrent", 5),
         temperature=getattr(config, "temperature", 0.3),
         response_format=response_format,
-        base_url=getattr(config, "base_url", ""),
+        base_url=getattr(config, "base_url", DEFAULT_LLM_BASE_URL),
         api_key_env=api_key_env,
     )
