@@ -1,0 +1,701 @@
+schema_version: read-paper-reference/v1
+case_id: 2312.03275v1-standard
+
+review:
+  status: draft
+  candidate_annotator: codex
+  candidate_verified_against:
+    - rendered_pdf_pages
+    - frozen_pdf_text_for_locator_confirmation
+  human_reviewer: null
+  reviewed_at: null
+  open_review_notes:
+    - Confirm whether all 18 selected experiment cells should remain required.
+    - Confirm the wording of the zero-shot component-training ambiguity.
+
+paper:
+  arxiv_id: "2312.03275"
+  version: v1
+  title: "VLFM: Vision-Language Frontier Maps for Zero-Shot Semantic Navigation"
+  paper_type: empirical_robotics
+  difficulty_tags:
+    - two_column
+    - embodied_ai
+    - compact_multi_dataset_table
+    - visual_method_diagram
+    - author_stated_limitations
+  pdf:
+    url: https://arxiv.org/pdf/2312.03275v1
+    local_path: data/topics-smoke/task_driven_3d_utility_learning_for_embodied_navigation/pdfs/2312.03275.pdf
+    sha256: 07f1f60fae11be46c488c1fbf5581c8f6d44904ac39ebb6071050d44d731efce
+    page_count: 7
+  source_inventory:
+    remote_tex_available: true
+    fixture_tex_staged: false
+    note: >-
+      TeX exists on ArXiv but is intentionally not supplied to this case. The case
+      evaluates the portable PDF-only reading baseline.
+
+task:
+  mode: standard
+  allowed_sources:
+    - pdf
+  source_strategy: pdf_only_fixture
+  focused_questions:
+    - >-
+      How does the language-grounded value map affect frontier selection, and what
+      main-table and ablation evidence supports the reported benefit?
+    - >-
+      In what precise sense is VLFM zero-shot, and which system components still
+      rely on prior training?
+  completion_requirements:
+    - Cover the method path from observations to frontier or target waypoint.
+    - Recover the selected Table I and Table II records with full header paths.
+    - Distinguish ObjectNav zero-shot training from pretrained or trained components.
+    - Report the single-floor and task-specific-map limitations.
+
+reference:
+  one_sentence_takeaway: >-
+    VLFM uses pretrained visual-language similarity to spatially score exploration
+    frontiers and reports strong zero-shot ObjectNav results, while retaining
+    important dependencies on pretrained perception and a trained PointNav policy.
+
+  evidence:
+    - id: vlfm-pdf-abstract
+      source: pdf
+      page: 1
+      section: Abstract
+      anchor: "VLFM builds occupancy maps from depth observations to identify frontiers"
+      note: Abstract-level method and headline result.
+
+    - id: vlfm-pdf-overview
+      source: pdf
+      page: 2
+      section: IV. Vision-Language Frontier Maps
+      anchor: "our approach is divided into three phases"
+      note: Initialization, exploration, and goal-navigation control flow.
+
+    - id: vlfm-pdf-value-map
+      source: pdf
+      page: 3
+      section: IV.B. Value map generation
+      anchor: "At the core of our approach is a value map"
+      note: BLIP-2 similarity, confidence channel, and frontier scoring.
+
+    - id: vlfm-pdf-value-fusion
+      source: pdf
+      page: 4
+      section: IV.B. Value map generation
+      anchor: "updated using weighted averaging using the confidence scores"
+      note: Formula and four-step map update procedure.
+
+    - id: vlfm-pdf-detection
+      source: pdf
+      page: 4
+      section: IV.C. Object detection
+      anchor: "we utilize YOLOv7"
+      note: YOLOv7, Grounding-DINO, Mobile-SAM, and depth-based target waypoint.
+
+    - id: vlfm-pdf-pointnav
+      source: pdf
+      page: 4
+      section: IV.D. Waypoint navigation
+      anchor: "train the policy for 2.5 billion steps"
+      note: The low-level PointNav policy is trained on HM3D scenes.
+
+    - id: vlfm-pdf-table-1
+      source: pdf
+      page: 5
+      section: VI.A. Benchmark results
+      table: Table I
+      anchor: "Zero-shot Object Navigation results on Gibson"
+      note: Primary ObjectNav results and comparison rows.
+
+    - id: vlfm-pdf-table-2
+      source: pdf
+      page: 6
+      section: VI.B. Ablations
+      table: Table II
+      anchor: "different value update methods used with VLFM"
+      note: Replacement, unweighted average, and weighted average results.
+
+    - id: vlfm-pdf-single-floor-limit
+      source: pdf
+      page: 6
+      section: VI.A. Benchmark results
+      anchor: "VLFM currently only supports single-floor episodes"
+      note: Missing z-coordinate and reported unavoidable multi-floor failures.
+
+    - id: vlfm-pdf-real-world
+      source: pdf
+      page: 6
+      section: VI.C. Real-world deployment
+      anchor: "We deploy VLFM on a Spot robot"
+      note: Qualitative deployment and RTX 4090 Max-Q execution setup.
+
+    - id: vlfm-pdf-conclusion-limits
+      source: pdf
+      page: 6
+      section: VII. Conclusion
+      anchor: "VLFM has a number of limitations"
+      note: Visibility assumption and task-specific semantic map limitations.
+
+  claims:
+    - id: vlfm-claim-value-guided-frontiers
+      statement: >-
+        VLFM projects BLIP-2 image-text cosine similarity into a 2D semantic value
+        map and chooses the currently highest-valued frontier for exploration.
+      evidence_refs:
+        - vlfm-pdf-overview
+        - vlfm-pdf-value-map
+      critical: true
+
+    - id: vlfm-claim-zero-shot-results
+      statement: >-
+        Among the zero-shot rows reported in Table I, VLFM has the highest SPL and
+        success rate on Gibson, HM3D, and MP3D; it does not exceed the trained
+        PIRLNav row on HM3D success rate.
+      evidence_refs:
+        - vlfm-pdf-table-1
+      critical: true
+
+    - id: vlfm-claim-weighted-update
+      statement: >-
+        Confidence-weighted value fusion reports better SPL and success rate than
+        replacement or unweighted averaging on all three evaluated datasets.
+      evidence_refs:
+        - vlfm-pdf-value-fusion
+        - vlfm-pdf-table-2
+      critical: true
+
+    - id: vlfm-claim-modular-training-nuance
+      statement: >-
+        VLFM uses no ObjectNav-specific training for semantic frontier selection,
+        but the full system uses pretrained perception models and a PointNav policy
+        trained for 2.5 billion steps on HM3D training scenes.
+      evidence_refs:
+        - vlfm-pdf-detection
+        - vlfm-pdf-pointnav
+      critical: true
+
+    - id: vlfm-claim-real-world-demonstration
+      statement: >-
+        The paper demonstrates VLFM qualitatively on a Boston Dynamics Spot in an
+        office, but does not report a quantitative real-world success protocol.
+      evidence_refs:
+        - vlfm-pdf-real-world
+      critical: false
+
+  method_components:
+    - id: vlfm-method-frontier-map
+      name: Frontier map generation
+      role: Build a top-down occupancy map and identify explored/unexplored boundaries.
+      inputs:
+        - depth observation
+        - odometry
+      outputs:
+        - obstacle map
+        - frontier waypoints
+      evidence_refs:
+        - vlfm-pdf-overview
+      critical: true
+
+    - id: vlfm-method-value-map
+      name: Language-grounded value map
+      role: Spatially score visible regions for their relevance to the target category.
+      inputs:
+        - RGB observation
+        - depth observation
+        - odometry
+        - target-conditioned text prompt
+        - BLIP-2
+      outputs:
+        - semantic value channel
+        - observation-confidence channel
+      evidence_refs:
+        - vlfm-pdf-value-map
+      critical: true
+
+    - id: vlfm-method-value-fusion
+      name: Confidence-weighted map update
+      role: Fuse repeated observations while weighting pixels by camera-relative confidence.
+      inputs:
+        - previous value and confidence
+        - current value and confidence
+      outputs:
+        - updated value and confidence
+      evidence_refs:
+        - vlfm-pdf-value-fusion
+      critical: true
+
+    - id: vlfm-method-target-detection
+      name: Target detection and waypoint construction
+      role: Detect the target and project the closest segmented target point into a waypoint.
+      inputs:
+        - RGB-D observation
+        - target category
+        - YOLOv7 or Grounding-DINO
+        - Mobile-SAM
+      outputs:
+        - target-visible decision
+        - target waypoint
+      evidence_refs:
+        - vlfm-pdf-detection
+      critical: true
+
+    - id: vlfm-method-waypoint-policy
+      name: Waypoint navigation
+      role: Navigate to either the selected frontier or detected target waypoint.
+      inputs:
+        - relative waypoint
+        - egocentric depth
+        - odometry
+      outputs:
+        - low-level navigation action
+      evidence_refs:
+        - vlfm-pdf-pointnav
+      critical: true
+
+  experiment_records:
+    - id: vlfm-main-gibson-spl
+      method: VLFM
+      method_role: proposed
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: Gibson
+      split: validation
+      protocol: 1000 episodes; success within 1 m; at most 500 steps
+      setting: {semantic_navigation_training: none}
+      metric: SPL
+      value: 52.2
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: ["VLFM (Ours)"], column: [Gibson, "SPL up"]}
+      raw_row_anchor: "VLFM (Ours) | 52.2 | 84.0"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-main-gibson-sr
+      method: VLFM
+      method_role: proposed
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: Gibson
+      split: validation
+      protocol: 1000 episodes; success within 1 m; at most 500 steps
+      setting: {semantic_navigation_training: none}
+      metric: success_rate
+      value: 84.0
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: ["VLFM (Ours)"], column: [Gibson, "SR up"]}
+      raw_row_anchor: "VLFM (Ours) | 52.2 | 84.0"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-main-hm3d-spl
+      method: VLFM
+      method_role: proposed
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: HM3D
+      split: validation
+      protocol: 2000 episodes; success within 1 m; at most 500 steps
+      setting: {semantic_navigation_training: none}
+      metric: SPL
+      value: 30.4
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: ["VLFM (Ours)"], column: [HM3D, "SPL up"]}
+      raw_row_anchor: "VLFM (Ours) | 30.4 | 52.5"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-main-hm3d-sr
+      method: VLFM
+      method_role: proposed
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: HM3D
+      split: validation
+      protocol: 2000 episodes; success within 1 m; at most 500 steps
+      setting: {semantic_navigation_training: none}
+      metric: success_rate
+      value: 52.5
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: ["VLFM (Ours)"], column: [HM3D, "SR up"]}
+      raw_row_anchor: "VLFM (Ours) | 30.4 | 52.5"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-main-mp3d-spl
+      method: VLFM
+      method_role: proposed
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: MP3D
+      split: validation
+      protocol: 2195 episodes; success within 1 m; at most 500 steps
+      setting: {semantic_navigation_training: none}
+      metric: SPL
+      value: 17.5
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: ["VLFM (Ours)"], column: [MP3D, "SPL up"]}
+      raw_row_anchor: "VLFM (Ours) | 17.5 | 36.4"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-main-mp3d-sr
+      method: VLFM
+      method_role: proposed
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: MP3D
+      split: validation
+      protocol: 2195 episodes; success within 1 m; at most 500 steps
+      setting: {semantic_navigation_training: none}
+      metric: success_rate
+      value: 36.4
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: ["VLFM (Ours)"], column: [MP3D, "SR up"]}
+      raw_row_anchor: "VLFM (Ours) | 17.5 | 36.4"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-baseline-semutil-gibson-spl
+      method: SemUtil
+      method_role: baseline
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: Gibson
+      split: validation
+      protocol: as reported in Table I
+      setting: {semantic_navigation_training: none}
+      metric: SPL
+      value: 40.5
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: [SemUtil], column: [Gibson, "SPL up"]}
+      raw_row_anchor: "SemUtil | 40.5 | 69.3"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: false
+
+    - id: vlfm-baseline-semutil-gibson-sr
+      method: SemUtil
+      method_role: baseline
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: Gibson
+      split: validation
+      protocol: as reported in Table I
+      setting: {semantic_navigation_training: none}
+      metric: success_rate
+      value: 69.3
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: [SemUtil], column: [Gibson, "SR up"]}
+      raw_row_anchor: "SemUtil | 40.5 | 69.3"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: false
+
+    - id: vlfm-baseline-esc-hm3d-spl
+      method: ESC
+      method_role: baseline
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: HM3D
+      split: validation
+      protocol: as reported in Table I
+      setting: {semantic_navigation_training: none}
+      metric: SPL
+      value: 22.3
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: [ESC], column: [HM3D, "SPL up"]}
+      raw_row_anchor: "ESC | 22.3 | 39.2"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: false
+
+    - id: vlfm-baseline-esc-hm3d-sr
+      method: ESC
+      method_role: baseline
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: HM3D
+      split: validation
+      protocol: as reported in Table I
+      setting: {semantic_navigation_training: none}
+      metric: success_rate
+      value: 39.2
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: [ESC], column: [HM3D, "SR up"]}
+      raw_row_anchor: "ESC | 22.3 | 39.2"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: false
+
+    - id: vlfm-baseline-esc-mp3d-spl
+      method: ESC
+      method_role: baseline
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: MP3D
+      split: validation
+      protocol: as reported in Table I
+      setting: {semantic_navigation_training: none}
+      metric: SPL
+      value: 14.2
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: [ESC], column: [MP3D, "SPL up"]}
+      raw_row_anchor: "ESC | 14.2 | 28.7"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: false
+
+    - id: vlfm-baseline-esc-mp3d-sr
+      method: ESC
+      method_role: baseline
+      task: Object Goal Navigation
+      benchmark: Habitat ObjectNav
+      dataset: MP3D
+      split: validation
+      protocol: as reported in Table I
+      setting: {semantic_navigation_training: none}
+      metric: success_rate
+      value: 28.7
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path: {row: [ESC], column: [MP3D, "SR up"]}
+      raw_row_anchor: "ESC | 14.2 | 28.7"
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: false
+
+    - id: vlfm-ablation-weighted-gibson-spl
+      method: VLFM
+      method_role: proposed
+      task: Value update ablation
+      benchmark: Habitat ObjectNav
+      dataset: Gibson
+      split: validation
+      protocol: VLFM with confidence-weighted value update
+      setting: {value_update: confidence_weighted_average}
+      metric: SPL
+      value: 52.2
+      unit: percent
+      higher_is_better: true
+      result_kind: ablation
+      header_path: {row: ["Weighted avg."], column: [Gibson, "SPL up"]}
+      raw_row_anchor: "Weighted avg. | 52.2 | 84.0"
+      evidence_refs: [vlfm-pdf-table-2]
+      critical: false
+
+    - id: vlfm-ablation-weighted-gibson-sr
+      method: VLFM
+      method_role: proposed
+      task: Value update ablation
+      benchmark: Habitat ObjectNav
+      dataset: Gibson
+      split: validation
+      protocol: VLFM with confidence-weighted value update
+      setting: {value_update: confidence_weighted_average}
+      metric: success_rate
+      value: 84.0
+      unit: percent
+      higher_is_better: true
+      result_kind: ablation
+      header_path: {row: ["Weighted avg."], column: [Gibson, "SR up"]}
+      raw_row_anchor: "Weighted avg. | 52.2 | 84.0"
+      evidence_refs: [vlfm-pdf-table-2]
+      critical: false
+
+    - id: vlfm-ablation-weighted-hm3d-spl
+      method: VLFM
+      method_role: proposed
+      task: Value update ablation
+      benchmark: Habitat ObjectNav
+      dataset: HM3D
+      split: validation
+      protocol: VLFM with confidence-weighted value update
+      setting: {value_update: confidence_weighted_average}
+      metric: SPL
+      value: 30.4
+      unit: percent
+      higher_is_better: true
+      result_kind: ablation
+      header_path: {row: ["Weighted avg."], column: [HM3D, "SPL up"]}
+      raw_row_anchor: "Weighted avg. | 30.4 | 52.5"
+      evidence_refs: [vlfm-pdf-table-2]
+      critical: false
+
+    - id: vlfm-ablation-weighted-hm3d-sr
+      method: VLFM
+      method_role: proposed
+      task: Value update ablation
+      benchmark: Habitat ObjectNav
+      dataset: HM3D
+      split: validation
+      protocol: VLFM with confidence-weighted value update
+      setting: {value_update: confidence_weighted_average}
+      metric: success_rate
+      value: 52.5
+      unit: percent
+      higher_is_better: true
+      result_kind: ablation
+      header_path: {row: ["Weighted avg."], column: [HM3D, "SR up"]}
+      raw_row_anchor: "Weighted avg. | 30.4 | 52.5"
+      evidence_refs: [vlfm-pdf-table-2]
+      critical: false
+
+    - id: vlfm-ablation-weighted-mp3d-spl
+      method: VLFM
+      method_role: proposed
+      task: Value update ablation
+      benchmark: Habitat ObjectNav
+      dataset: MP3D
+      split: validation
+      protocol: VLFM with confidence-weighted value update
+      setting: {value_update: confidence_weighted_average}
+      metric: SPL
+      value: 17.5
+      unit: percent
+      higher_is_better: true
+      result_kind: ablation
+      header_path: {row: ["Weighted avg."], column: [MP3D, "SPL up"]}
+      raw_row_anchor: "Weighted avg. | 17.5 | 36.4"
+      evidence_refs: [vlfm-pdf-table-2]
+      critical: false
+
+    - id: vlfm-ablation-weighted-mp3d-sr
+      method: VLFM
+      method_role: proposed
+      task: Value update ablation
+      benchmark: Habitat ObjectNav
+      dataset: MP3D
+      split: validation
+      protocol: VLFM with confidence-weighted value update
+      setting: {value_update: confidence_weighted_average}
+      metric: success_rate
+      value: 36.4
+      unit: percent
+      higher_is_better: true
+      result_kind: ablation
+      header_path: {row: ["Weighted avg."], column: [MP3D, "SR up"]}
+      raw_row_anchor: "Weighted avg. | 17.5 | 36.4"
+      evidence_refs: [vlfm-pdf-table-2]
+      critical: false
+
+  limitations:
+    - id: vlfm-limit-single-floor
+      statement: >-
+        The 2D maps and missing odometry z-coordinate restrict VLFM to single-floor
+        episodes, causing reported failures on 14.6% of HM3D and 9.6% of MP3D episodes.
+      provenance: author_stated
+      evidence_refs: [vlfm-pdf-single-floor-limit]
+      critical: true
+
+    - id: vlfm-limit-visible-target
+      statement: >-
+        The method assumes that the target is visible from the robot camera's
+        default height and does not perform interactive search such as opening drawers.
+      provenance: author_stated
+      evidence_refs: [vlfm-pdf-conclusion-limits]
+      critical: true
+
+    - id: vlfm-limit-task-specific-map
+      statement: >-
+        The value map stores target-specific semantics and cannot directly support
+        sequential targets, other navigation tasks, or long-horizon multitask execution.
+      provenance: author_stated
+      evidence_refs: [vlfm-pdf-conclusion-limits]
+      critical: true
+
+    - id: vlfm-limit-real-world-evaluation
+      statement: >-
+        The real-world section demonstrates feasibility but provides no episode
+        count, success rate, or controlled comparison.
+      provenance: annotator_inference
+      evidence_refs: [vlfm-pdf-real-world]
+      critical: false
+
+  ambiguities:
+    - id: vlfm-ambiguity-zero-shot
+      risk: >-
+        Interpreting zero-shot as meaning that every component is untrained or that
+        no domain data was used anywhere in the system.
+      expected_disclosure: >-
+        State that zero-shot refers to ObjectNav-specific semantic training; list
+        pretrained perception and the HM3D-trained PointNav policy separately.
+      evidence_refs: [vlfm-pdf-detection, vlfm-pdf-pointnav]
+      critical: true
+
+    - id: vlfm-ambiguity-sota-scope
+      risk: Claiming VLFM is best on every metric among every Table I row.
+      expected_disclosure: >-
+        Scope the headline to zero-shot rows and note that PIRLNav has higher HM3D
+        success rate while VLFM has higher HM3D SPL.
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-ambiguity-dash
+      risk: Treating a dash in Table I as a numeric zero.
+      expected_disclosure: Treat dashes as not reported or not evaluated.
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: true
+
+    - id: vlfm-ambiguity-cross-dataset
+      risk: Comparing Gibson, HM3D, and MP3D values as if they share episodes and difficulty.
+      expected_disclosure: Keep each dataset and validation protocol as a separate setting.
+      evidence_refs: [vlfm-pdf-table-1]
+      critical: false
+
+    - id: vlfm-ambiguity-real-world
+      risk: Converting the qualitative Spot demonstration into a quantitative success claim.
+      expected_disclosure: Explicitly mark the real-world result as qualitative.
+      evidence_refs: [vlfm-pdf-real-world]
+      critical: true
+
+  coverage:
+    required_areas:
+      - id: vlfm-area-problem
+        pages: [1, 2]
+        description: Problem, zero-shot motivation, and task definition.
+        evidence_refs: [vlfm-pdf-abstract, vlfm-pdf-overview]
+      - id: vlfm-area-method
+        pages: [2, 3, 4]
+        description: Frontier map, value map, object detection, and waypoint policy.
+        evidence_refs:
+          - vlfm-pdf-overview
+          - vlfm-pdf-value-map
+          - vlfm-pdf-value-fusion
+          - vlfm-pdf-detection
+          - vlfm-pdf-pointnav
+      - id: vlfm-area-primary-results
+        pages: [5]
+        description: Dataset protocols and Table I.
+        evidence_refs: [vlfm-pdf-table-1]
+      - id: vlfm-area-ablation-and-limits
+        pages: [6]
+        description: Table II, multi-floor failures, real-world deployment, and limitations.
+        evidence_refs:
+          - vlfm-pdf-table-2
+          - vlfm-pdf-single-floor-limit
+          - vlfm-pdf-real-world
+          - vlfm-pdf-conclusion-limits
+    optional_areas:
+      - pages: [7]
+        description: Remaining references.

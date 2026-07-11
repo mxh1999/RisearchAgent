@@ -2,8 +2,8 @@
 
 Date: 2026-07-11
 
-Status: Proposed architecture baseline. Implementation must not begin until the
-decisions and acceptance gates in this document are reviewed.
+Status: Approved architecture baseline. Implementation follows the phases and
+acceptance gates in this document.
 
 ## 1. Executive Decision
 
@@ -811,6 +811,10 @@ Create a manually reviewed set of at least 8 papers covering:
 
 The existing VLFM, MTU3D, PDF parser smoke papers, and TeX samples are initial
 candidates, not a sufficient final corpus.
+
+The versioned corpus contract and current two-paper calibration pilot live under
+`evals/read_paper/`. Pilot cases remain draft until their explicit human-review
+fields are completed; draft references cannot be used for acceptance gates.
 
 ### 20.2 Human Reference
 
