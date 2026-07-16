@@ -1,8 +1,8 @@
 """Tool functions for the onboarding research advisor.
 
-These functions are called by Gemini Pro via AFC (Automatic Function Calling)
-during the interactive onboarding conversation. They wrap existing pipeline
-components to provide search, reading, and configuration capabilities.
+These functions are called by the interactive onboarding advisor. They wrap
+existing pipeline components to provide search, reading, and configuration
+capabilities.
 """
 
 import asyncio
@@ -13,12 +13,16 @@ from typing import Optional
 import arxiv
 import yaml
 
-from src.config import AppConfig, LLMConfig, ScraperConfig
+from src.config import (
+    DEFAULT_LLM_API_KEY_ENV,
+    DEFAULT_LLM_BASE_URL,
+    DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_RESPONSE_FORMAT,
+    LLMConfig,
+)
 from src.crawl.pdf_downloader import PDFDownloader
-from src.crawl.scraper import ArxivScraper
-from src.models import SearchTopic
+from src.llm.client import LLMClient
 from src.reader.deep_reader import DeepReader
-from src.llm.gemini_client import GeminiClient
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +30,13 @@ logger = logging.getLogger(__name__)
 class OnboardTools:
     """Tool implementations for the research advisor.
 
-    Each public method can be registered as a Gemini AFC tool function.
-    The methods are sync wrappers that run async code internally,
-    because google-genai AFC expects regular functions.
+    The methods are sync wrappers that run async code internally so they can be
+    registered with synchronous tool-calling clients.
     """
 
     def __init__(
         self,
-        llm: GeminiClient,
+        llm: LLMClient,
         llm_config: LLMConfig,
         pdf_dir: Path = Path("data/pdfs"),
         config_path: str = "config.yaml",
@@ -186,7 +189,7 @@ class OnboardTools:
             if not reading:
                 return {"error": "Failed to extract experiment data"}
 
-            # Format experiment results for Gemini
+            # Format experiment results for the advisor.
             benchmarks = []
             if reading.experiment_table and reading.experiment_table.entries:
                 for entry in reading.experiment_table.entries:
@@ -276,9 +279,13 @@ class OnboardTools:
         # Update config
         config_data["topics"] = yaml_topics
         config_data.setdefault("llm", {})
-        config_data["llm"].setdefault("filter_model", "gemini-2.5-flash")
-        config_data["llm"].setdefault("reader_model", "gemini-2.5-pro")
-        config_data["llm"].setdefault("embedding_model", "gemini-embedding-001")
+        config_data["llm"].setdefault(
+            "response_format", DEFAULT_LLM_RESPONSE_FORMAT
+        )
+        config_data["llm"].setdefault("base_url", DEFAULT_LLM_BASE_URL)
+        config_data["llm"].setdefault("api_key_env", DEFAULT_LLM_API_KEY_ENV)
+        config_data["llm"].setdefault("filter_model", DEFAULT_LLM_MODEL)
+        config_data["llm"].setdefault("reader_model", DEFAULT_LLM_MODEL)
         config_data["llm"].setdefault("max_concurrent", 5)
         config_data["llm"].setdefault("temperature", 0.3)
 
@@ -292,7 +299,6 @@ class OnboardTools:
         config_data["filter"].setdefault("borderline_min", max(relevance_threshold - 2, 2))
 
         config_data.setdefault("db_path", "data/papers.db")
-        config_data.setdefault("chroma_path", "data/chroma")
         config_data.setdefault("pdf_dir", "data/pdfs")
         config_data.setdefault("sota_dir", "data/sota")
 

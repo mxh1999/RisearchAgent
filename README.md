@@ -1,28 +1,34 @@
 # RisearchAgent
 
-An automated ArXiv research assistant that reads full papers, tracks state-of-the-art benchmarks, and classifies contributions — so you can focus on the papers that actually matter.
+An automated arXiv research assistant that surveys a research topic, reads full papers, and maintains auditable SOTA tables.
 
 ## Why RisearchAgent
 
-Most tools stop at abstract-level summaries. RisearchAgent goes deeper:
+Most tools stop at abstract-level summaries. RisearchAgent is designed for topic-level research workflows:
 
-- **Full-text deep reading** — Three-pass LLM analysis of complete PDFs, not just abstracts
-- **SOTA tracking** — Extracts benchmark results and maintains up-to-date leaderboard tables in Markdown
-- **Contribution classification** — Rates papers as breakthrough / significant / incremental / marginal against your existing knowledge base
-- **Personalized filtering** — Scores relevance against your research profile, so you only read what's worth reading
+- **Topic refinement** - Turns a vague research direction or chat note into a reusable topic profile with scope, query families, benchmark hints, and open questions.
+- **Topic discovery** - Searches arXiv from the topic profile, screens candidates, downloads papers, and builds a topic-local reading set.
+- **Full-paper reading** - Runs staged LLM analysis over complete PDFs with page-aware evidence.
+- **TeX source table extraction** - Downloads arXiv source archives when available and extracts LaTeX tables for cleaner benchmark evidence than PDF text alone.
+- **Survey synthesis** - Maintains topic artifacts such as `survey.md`, `papers.md`, `positioning.md`, and `references.md`.
+- **SOTA tracking** - Extracts experiment records and renders auditable Markdown leaderboards with result kinds and setting groups.
 
 ## Pipeline
 
-```
-ArXiv API ──> Crawl ──> Filter ──> Deep Read ──> Contribute ──> SOTA Update
-                         (Gemini Flash)  (Gemini Pro)   (ChromaDB)    (Markdown tables)
+```text
+survey refine -> topic discover -> topic screen -> topic download
+       -> topic ingest -> topic validate -> topic update
 ```
 
-1. **Crawl** — Fetch papers from ArXiv by configurable topic queries
-2. **Filter** — LLM relevance scoring (0–10) against your research profile
-3. **Deep Read** — Download PDF, extract text (PyMuPDF), run three-pass LLM analysis
-4. **Contribution Analysis** — Compare findings against ChromaDB knowledge base
-5. **SOTA Update** — Extract experiment tables and update benchmark leaderboards
+1. **Refine** - Build or update `topic.yaml` from a natural-language topic description.
+2. **Discover** - Query arXiv with topic-specific query families.
+3. **Screen** - Use an LLM relevance gate before downloading.
+4. **Download** - Materialize PDFs and, when possible, arXiv TeX source archives.
+5. **Ingest** - Deep-read accepted papers. PDF text is used for the full paper; TeX source tables are injected into the experiment extraction stage.
+6. **Validate** - Re-check relevance after full reading.
+7. **Update** - Refresh survey artifacts and SOTA markdown tables.
+
+The legacy global pipeline is still available, but new topic survey work should prefer the topic workflow above.
 
 ## Quick Start
 
@@ -31,10 +37,11 @@ ArXiv API ──> Crawl ──> Filter ──> Deep Read ──> Contribute ─�
 pip install -r requirements.txt
 
 # Set up environment
-cp .env.example .env       # add your GEMINI_API_KEY
+cp .env.example .env       # add your RISEARCHAGENT_API_KEY
+cp example.yaml config.yaml # add your provider base_url and model names
 
-# Interactive onboarding — builds your config.yaml via conversation
-python run.py onboard
+# Refine a topic with the default GPT provider
+python run.py survey refine "your research direction"
 
 # Or manually edit config.yaml with your research topics
 ```
@@ -42,42 +49,92 @@ python run.py onboard
 ## Usage
 
 ```bash
-# Run the full pipeline (crawl → filter → read → analyze → SOTA)
+# Legacy Gemini-only global pipeline
 python run.py pipeline
 
-# Or run stages individually
-python run.py crawl                    # fetch new papers
-python run.py filter                   # score relevance
-python run.py read <arxiv_id>          # deep-read a specific paper
+# Legacy stages
+python run.py crawl
+python run.py filter
+python run.py read <arxiv_id>
 
 # Knowledge management
-python run.py sota                     # view SOTA leaderboards
-python run.py stats                    # database statistics
-python run.py export [output.json]     # export knowledge for sharing
-python run.py import data.json         # import knowledge (--merge to upsert)
+python run.py sota
+python run.py stats
+python run.py export [output.json]
+python run.py import data.json         # add --merge to upsert
 
-# Onboarding
-python run.py onboard                  # first-time setup
-python run.py onboard --refine         # update existing research profile
+# Legacy Gemini-only onboarding
+python run.py onboard
+python run.py onboard --refine
 ```
+
+## Topic Workflow
+
+```bash
+# 1. Refine a topic from free-form text
+python run.py survey refine "semantic exploration for object-goal navigation"
+
+# 2. Discover and screen candidate papers
+python run.py topic discover --topic data/topics/<topic_id>/topic.yaml --sort relevance
+python run.py topic screen --topic data/topics/<topic_id>/topic.yaml --threshold 0.6
+
+# 3. Download PDFs and arXiv source archives, then write an ingest manifest
+python run.py topic download --topic data/topics/<topic_id>/topic.yaml --all
+
+# 4. Deep-read the downloaded papers
+python run.py topic ingest --topic data/topics/<topic_id>/topic.yaml \
+  --manifest data/topics/<topic_id>/ingest_manifest.yaml
+
+# 5. Validate read papers and update survey/SOTA artifacts
+python run.py topic validate --topic data/topics/<topic_id>/topic.yaml --threshold 0.6
+python run.py topic update --topic data/topics/<topic_id>/topic.yaml
+```
+
+Use `--no-llm-normalize` with `topic update` when you want conservative exact SOTA setting groups without LLM-based synonym merging.
+
+## PDF And Source Extraction
+
+PDF extraction uses `pymupdf4llm` first and falls back to PyMuPDF. This is good enough for page-aware full-paper reading, but complex benchmark tables can still lose column structure in PDF text.
+
+For arXiv papers, `topic download` also tries `https://arxiv.org/e-print/<paper_id>` and stores the result under `sources/<paper_id>.tar.gz`. During `topic ingest`, the reader extracts LaTeX table environments from that source archive and injects them into the experiment extraction stage. This gives SOTA extraction access to table captions, labels, raw LaTeX, and best-effort markdown tables with preserved benchmark axes such as HM3D/MP3D, train set, split, and metric columns.
+
+If the source archive is unavailable or cannot be parsed, ingestion continues with PDF text only.
 
 ## Configuration
 
-`config.yaml` controls everything:
+`config.yaml` is local-only and ignored by git because it may contain private provider endpoints. Start from `example.yaml`:
+
+```bash
+cp example.yaml config.yaml
+```
+
+Set `RISEARCHAGENT_API_KEY` in `.env`. The default provider uses an OpenAI-compatible Chat Completions API:
+
+```yaml
+llm:
+  response_format: gpt
+  base_url: https://api.ikuncode.cc
+  api_key_env: RISEARCHAGENT_API_KEY
+  filter_model: gpt-5.6-sol
+  reader_model: gpt-5.6-sol
+```
+
+`response_format` selects the API dialect: `gpt` for OpenAI-compatible chat completions, `claude` for Anthropic-compatible messages, and `gemini` for Gemini-native calls.
+
+Topic workflows primarily use `topic.yaml` files created under `data/topics/<topic_id>/`.
 
 | Section | What it does |
 |---------|-------------|
-| `topics` | ArXiv search queries + per-topic research profile for relevance filtering |
-| `llm` | Model selection (Flash/Pro), concurrency, temperature |
-| `scraper` | Max results per topic, lookback window in days |
+| `topics` | arXiv search queries and per-topic research profile for relevance filtering |
+| `llm` | Provider dialect, base URL, model selection, concurrency, temperature, and API key env var |
+| `scraper` | Max results per topic and lookback window in days |
 | `filter` | Relevance score thresholds |
 
 ## Tech Stack
 
 | Component | Choice |
 |-----------|--------|
-| LLM | Gemini Flash (filtering) + Pro (deep reading) |
-| PDF Extraction | PyMuPDF |
-| Vector Store | ChromaDB |
+| LLM | `gpt-5.6-sol` through an OpenAI-compatible provider by default |
+| PDF Extraction | `pymupdf4llm` with PyMuPDF fallback |
+| Table Extraction | arXiv TeX source archives when available |
 | Database | SQLite via aiosqlite |
-| Embeddings | Gemini Embedding |

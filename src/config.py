@@ -8,14 +8,23 @@ from dotenv import load_dotenv
 from src.models import SearchTopic
 
 
+DEFAULT_LLM_RESPONSE_FORMAT = "gpt"
+DEFAULT_LLM_BASE_URL = "https://api.ikuncode.cc"
+DEFAULT_LLM_API_KEY_ENV = "RISEARCHAGENT_API_KEY"
+DEFAULT_LLM_MODEL = "gpt-5.6-sol"
+
+
 @dataclass
 class LLMConfig:
     filter_model: str
     reader_model: str
-    embedding_model: str
     api_key: str
     max_concurrent: int
     temperature: float
+    embedding_model: str = ""  # Legacy pipeline only.
+    response_format: str = DEFAULT_LLM_RESPONSE_FORMAT
+    base_url: str = DEFAULT_LLM_BASE_URL
+    api_key_env: str = DEFAULT_LLM_API_KEY_ENV
 
 
 @dataclass
@@ -61,13 +70,23 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     ]
 
     llm_raw = raw["llm"]
+    response_format = llm_raw.get("response_format", DEFAULT_LLM_RESPONSE_FORMAT)
+    default_api_key_env = (
+        "GEMINI_API_KEY"
+        if response_format == "gemini"
+        else DEFAULT_LLM_API_KEY_ENV
+    )
+    api_key_env = llm_raw.get("api_key_env", default_api_key_env)
     llm = LLMConfig(
-        filter_model=llm_raw.get("filter_model", "gemini-2.5-flash"),
-        reader_model=llm_raw.get("reader_model", "gemini-2.5-pro"),
-        embedding_model=llm_raw.get("embedding_model", "text-embedding-004"),
-        api_key=os.environ.get("GEMINI_API_KEY", ""),
+        filter_model=llm_raw.get("filter_model", DEFAULT_LLM_MODEL),
+        reader_model=llm_raw.get("reader_model", DEFAULT_LLM_MODEL),
+        embedding_model=llm_raw.get("embedding_model", ""),
+        api_key=os.environ.get(api_key_env, ""),
         max_concurrent=llm_raw.get("max_concurrent", 5),
         temperature=llm_raw.get("temperature", 0.3),
+        response_format=response_format,
+        base_url=llm_raw.get("base_url", DEFAULT_LLM_BASE_URL),
+        api_key_env=api_key_env,
     )
 
     scraper_raw = raw.get("scraper", {})

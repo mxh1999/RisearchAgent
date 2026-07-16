@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Project
 
@@ -13,9 +13,9 @@ RisearchAgent — an automated ArXiv research assistant that crawls papers, filt
 pip install -r requirements.txt
 
 # Environment setup
-cp .env.example .env  # set GEMINI_API_KEY
+cp .env.example .env  # set RISEARCHAGENT_API_KEY
 
-# Run full pipeline
+# Run legacy Gemini-only pipeline
 python run.py pipeline
 
 # Run individual stages
@@ -28,35 +28,37 @@ python run.py sota          # view SOTA leaderboards
 python run.py stats         # database statistics
 python run.py export [out.json]
 python run.py import data.json --merge
-python run.py onboard       # interactive config setup
+python run.py onboard       # legacy Gemini-only config setup
 python run.py onboard --refine
 
 # Verbose logging
 python run.py -v <command>
 ```
 
-No test suite exists yet — the `tests/` directory contains only an empty `__init__.py`.
+Experiments should use the `paper_reader` conda environment.
+
+Run tests with `conda run -n paper_reader python -m pytest`.
 
 ## Architecture
 
-### Pipeline (5 stages, all async)
+### Legacy pipeline (5 stages, all async)
 
 `run.py` → `PipelineOrchestrator` (src/pipeline/orchestrator.py) orchestrates everything:
 
 1. **Crawl** — `ArxivScraper` fetches papers via ArXiv API per topic queries in config.yaml
-2. **Filter** — `RelevanceJudge` scores papers 0–10 against per-topic research profiles using Gemini Flash
-3. **Deep Read** — `PDFDownloader` extracts text (PyMuPDF, truncated to 20 pages), `DeepReader` runs 3-pass Gemini Pro analysis
+2. **Filter** — `RelevanceJudge` scores papers 0–10 against per-topic research profiles
+3. **Deep Read** — `PDFDownloader` extracts text and `DeepReader` runs staged LLM analysis
 4. **Contribution Analysis** — `ContributionAnalyzer` compares against ChromaDB knowledge base, classifies as breakthrough/significant/incremental/marginal
 5. **SOTA Update** — `SOTAKnowledgeBase` updates Markdown leaderboard files in `data/sota/`, with LLM-based conflict resolution
 
 ### LLM layer
 
-`GeminiClient` (src/llm/gemini_client.py) wraps the `google-genai` SDK. All LLM calls go through it. Key features: async with semaphore-based concurrency control, JSON mode via `response_mime_type`, exponential backoff retry. Two model tiers: Flash for filtering, Pro for deep reading.
+`create_llm_client()` (src/llm/client.py) selects an API-dialect adapter. The default is the OpenAI-compatible `GPTClient` using `gpt-5.6-sol`; Claude- and Gemini-compatible clients remain for explicit legacy configurations. API keys are loaded from the configured environment variable and must never be committed.
 
-### Storage (dual)
+### Storage
 
 - **SQLite** (src/storage/database.py) — structured data: papers, relevance verdicts, deep readings, contribution deltas, SOTA update audit log, pipeline runs. Uses `aiosqlite`. Schema includes automatic migrations.
-- **ChromaDB** (src/knowledge/knowledge_base.py) — vector store with 3 collections: `paper_contributions`, `paper_methods`, `research_context`. Uses Gemini embeddings.
+- **ChromaDB** (src/knowledge/knowledge_base.py) — retained only by the legacy pipeline. Embeddings are not part of the active topic workflow or new agent design.
 
 ### SOTA tracking
 
@@ -68,13 +70,13 @@ All dataclasses live in `src/models.py`: Paper, RelevanceVerdict, DeepReading, E
 
 ### Configuration
 
-`config.yaml` → `load_config()` in src/config.py → `AppConfig` dataclass. LLM API key comes from `GEMINI_API_KEY` env var (loaded via python-dotenv). Topics include ArXiv queries + research profiles for relevance filtering.
+`config.yaml` → `load_config()` in src/config.py → `AppConfig` dataclass. The default GPT provider reads `RISEARCHAGENT_API_KEY` from `.env`. Topics include ArXiv queries + research profiles for relevance filtering.
 
 ### Key patterns
 
 - Every database method opens its own `aiosqlite.connect()` — no connection pooling
 - The orchestrator wires all components together; individual modules receive their dependencies via constructor injection
-- LLM responses are parsed as JSON (`generate_json`) using Gemini's native JSON mode
+- LLM responses are parsed as JSON through the selected provider adapter
 - Section parsing in `deep_reader.py` uses LLM-based parsing (not regex)
 - The onboarding module (src/onboard/) runs a synchronous conversational loop, separate from the async pipeline
 

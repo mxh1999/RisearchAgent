@@ -1,0 +1,118 @@
+schema_version: read-paper-rubric/v1
+rubric_id: evidence-centered-read-paper-v1
+description: >-
+  Outcome-centered rubric for evaluating an LLM-controlled paper reading run.
+  Narrative style and exact tool traces are not scored. Claims and records must
+  instead be correct, sufficiently complete, and backed by resolvable evidence.
+
+scoring:
+  total_points: 100
+  aggregation: report_dimension_scores_and_total
+  reference_matching:
+    claims: semantic_match_with_evidence_entailment_check
+    method_components: semantic_match_with_evidence_entailment_check
+    experiment_records: normalized_exact_field_match
+    limitations: semantic_match_with_provenance_check
+    ambiguities: semantic_match_or_explicit_uncertainty_disclosure
+  critical_items: >-
+    Missing or incorrect critical items trigger the applicable hard failure in
+    addition to reducing ordinary metric scores.
+
+dimensions:
+  - id: evidence_fidelity
+    points: 30
+    metrics:
+      - id: evidence_locator_validity
+        points: 10
+        scoring: resolvable_refs / submitted_refs
+      - id: evidence_entailment_precision
+        points: 20
+        scoring: supported_claims / claims_with_evidence
+
+  - id: experiment_extraction
+    points: 35
+    metrics:
+      - id: primary_experiment_precision
+        points: 10
+        scoring: correct_submitted_primary_records / submitted_primary_records
+      - id: primary_experiment_recall
+        points: 10
+        scoring: matched_required_primary_records / required_primary_records
+      - id: exact_numeric_value_accuracy
+        points: 8
+        scoring: exact_values / matched_numeric_records
+      - id: header_to_cell_mapping_accuracy
+        points: 4
+        scoring: correct_header_paths / matched_table_records
+      - id: result_role_classification_accuracy
+        points: 3
+        scoring: correct_method_and_result_roles / matched_records
+
+  - id: paper_understanding
+    points: 20
+    metrics:
+      - id: primary_claim_coverage
+        points: 8
+        scoring: matched_required_claims / required_claims
+      - id: method_component_coverage
+        points: 6
+        scoring: matched_required_components / required_components
+      - id: limitation_quality
+        points: 6
+        scoring: >-
+          Coverage and correctness of required limitations, including whether an
+          item is author-stated or an annotator inference.
+
+  - id: coverage_and_uncertainty
+    points: 15
+    metrics:
+      - id: required_area_coverage
+        points: 5
+        scoring: covered_required_areas / required_areas
+      - id: ambiguity_disclosure_recall
+        points: 5
+        scoring: disclosed_required_ambiguities / required_ambiguities
+      - id: completion_validity
+        points: 5
+        scoring: >-
+          Full credit only when finish occurs after all critical coverage and
+          evidence requirements are satisfied.
+
+hard_failures:
+  - id: fabricated_or_unresolvable_evidence
+    condition: Any submitted critical claim cites a nonexistent or wrong source location.
+  - id: unsupported_critical_claim
+    condition: A critical conclusion is not entailed by its cited evidence.
+  - id: critical_numeric_error
+    condition: A required primary result is assigned the wrong numeric value.
+  - id: silent_ambiguous_mapping
+    condition: A known ambiguous table mapping is asserted without valid resolution or disclosure.
+  - id: wrong_result_ownership
+    condition: A baseline result is attributed to the proposed method, or vice versa.
+  - id: premature_finish
+    condition: The run finishes while a critical required area or unresolved blocker remains.
+
+quality_gates:
+  evidence_locator_validity: 1.0
+  evidence_entailment_precision: 0.95
+  primary_experiment_precision: 0.95
+  primary_experiment_recall: 0.90
+  exact_numeric_value_accuracy: 0.95
+  silent_ambiguous_mapping_count: 0
+  premature_finish_rate: lower_than_legacy_baseline
+  required_area_coverage: no_critical_regression_from_legacy
+
+operational_metrics:
+  scored: false
+  fields:
+    - model_turns
+    - tool_calls_by_name
+    - input_tokens
+    - output_tokens
+    - wall_time_seconds
+    - estimated_cost
+    - provider_failures
+    - recovery_turns
+  policy: >-
+    Record these during the quality-first pilot. Do not trade quality for cost or
+    latency until the first V2 baseline exists.

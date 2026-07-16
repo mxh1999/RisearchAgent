@@ -9,6 +9,7 @@ build/
 
 # Environment
 .env
+config.yaml
 .venv/
 venv/
 env/
@@ -16,7 +17,10 @@ env/
 # Data
 data/
 
-# Claude Code
+# Local worktrees
+.worktrees/
+
+# Agent tooling
 .claude/
 
 # IDE

@@ -1,0 +1,1041 @@
+schema_version: read-paper-reference/v1
+case_id: 2303.03378v1-standard
+
+review:
+  status: draft
+  candidate_annotator: codex
+  candidate_verified_against:
+    - rendered_pdf_pages
+    - frozen_arxiv_v1_tex_source
+  human_reviewer: null
+  reviewed_at: null
+  open_review_notes:
+    - Confirm the selected 20 experiment cells and their criticality.
+    - Confirm that Table 2 task and demo-count paths are sufficiently explicit.
+    - Confirm the reviewer-inferred limitation about qualitative robot evaluation.
+
+paper:
+  arxiv_id: "2303.03378"
+  version: v1
+  title: "PaLM-E: An Embodied Multimodal Language Model"
+  paper_type: empirical_multimodal_robotics
+  difficulty_tags:
+    - two_column
+    - embodied_ai
+    - long_appendix
+    - dense_multi_level_tables
+    - multimodal_method
+    - tex_table_verification
+  pdf:
+    url: https://arxiv.org/pdf/2303.03378v1
+    local_path: data/2026-06-03/pdfs/2303.03378.pdf
+    sha256: 535cc3c7fe1ae7428b9ac7d6a3738a0529975aadc372b2229ea0cb2ce724576a
+    page_count: 18
+  tex:
+    usage_policy: on_demand_for_table_header_resolution
+    archive:
+      url: https://arxiv.org/e-print/2303.03378v1
+      local_path: data/eval_corpus/read_paper/pilot_v0/assets/2303.03378v1.eprint
+      sha256: cad9ecfc8a561588b3431719b093ae8efca05f49881c95822bd3b358fe4be3b9
+    source_root: data/eval_corpus/read_paper/pilot_v0/assets/2303.03378v1-source
+    files:
+      - path: main.tex
+        local_path: data/eval_corpus/read_paper/pilot_v0/assets/2303.03378v1-source/main.tex
+        sha256: 5031560212451f3cea5d60458a90d6af937648a709ea3d5f62365d4e31a69add
+
+task:
+  mode: standard
+  allowed_sources:
+    - pdf
+    - tex
+  source_strategy: pdf_first_tex_on_demand
+  focused_questions:
+    - >-
+      What evidence supports transfer from heterogeneous vision-language and robot
+      training, and which result settings must remain separate?
+    - >-
+      Recover the selected dense Table 2 cells with their complete task, demo-count,
+      model-size, pretraining, freezing, and task-finetuning paths.
+    - >-
+      Separate quantitative simulated or benchmark results from qualitative
+      real-robot demonstrations.
+  completion_requirements:
+    - Explain how continuous observations enter the language model embedding sequence.
+    - Cover input encoders, training mixture, freezing variants, and the control loop.
+    - Recover selected records from Tables 1, 2, 4, 5, and 8.
+    - Resolve or explicitly disclose every known multi-level header ambiguity.
+    - Cover language-retention tradeoffs and real-robot evidence scope.
+
+reference:
+  one_sentence_takeaway: >-
+    PaLM-E interleaves learned continuous-observation embeddings with text tokens in
+    a pretrained PaLM and reports cross-domain transfer across robot and
+    vision-language tasks, with scale reducing language-task forgetting.
+
+  evidence:
+    - id: palme-pdf-abstract
+      source: pdf
+      page: 1
+      section: Abstract
+      anchor: "multi-modal sentences that interleave visual, continuous state estimation, and textual input"
+      note: Headline architecture, tasks, transfer, and 562B claim.
+
+    - id: palme-pdf-contributions
+      source: pdf
+      page: 3
+      section: 1. Introduction
+      anchor: "demonstrate positive transfer across different tasks"
+      note: Stated contributions and generalist-versus-embodied positioning.
+
+    - id: palme-pdf-architecture
+      source: pdf
+      page: 4
+      section: 3. PaLM-E
+      anchor: "Multi-modal sentences: injection of continuous observations"
+      note: Encoder mapping, token interleaving, and decoder-only PaLM.
+
+    - id: palme-pdf-control-loop
+      source: pdf
+      page: 4
+      section: 3. PaLM-E
+      anchor: "Embodying the output: PaLM-E in a robot control loop"
+      note: Text outputs, low-level skill policies, and replanning boundary.
+
+    - id: palme-pdf-input-representations
+      source: pdf
+      page: 5
+      section: 4. Input and Scene Representations
+      anchor: "State estimation vectors"
+      note: State, ViT, object-centric, and OSRT input encoders.
+
+    - id: palme-pdf-training
+      source: pdf
+      page: 5
+      section: 5. Training Recipes
+      anchor: "Variation with Model freezing"
+      note: Composite model sizes, frozen-LLM option, and trainable encoders.
+
+    - id: palme-pdf-cotraining
+      source: pdf
+      page: 6
+      section: 5. Training Recipes
+      anchor: "Co-training across tasks"
+      note: Full mixture and transfer experimental design.
+
+    - id: palme-pdf-tamp-analysis
+      source: pdf
+      page: 7
+      section: 6.2. TAMP Environment
+      anchor: "performance of the ViT-4B more than doubles"
+      note: Interpretation of pretraining, full-mixture transfer, and OSRT results.
+
+    - id: palme-pdf-table-1
+      source: pdf
+      page: 8
+      section: 6.2. TAMP Environment
+      table: Table 1
+      anchor: "Comparison of different input representations on TAMP"
+      note: One-percent TAMP success rates.
+
+    - id: palme-pdf-real-robot
+      source: pdf
+      page: 8
+      section: 6.4. Mobile Manipulation Environment
+      anchor: "Real robot results: Long-horizon planning"
+      note: Qualitative long-horizon mobile manipulation evidence.
+
+    - id: palme-pdf-table-2
+      source: pdf
+      page: 9
+      section: 6.3. Language-Table Environment
+      table: Table 2
+      anchor: "Results on planning tasks in the simulated environment"
+      note: Dense task-by-demo-count planning table.
+
+    - id: palme-pdf-table-4
+      source: pdf
+      page: 9
+      section: 6.4. Mobile Manipulation Environment
+      table: Table 4
+      anchor: "failure detection and affordance prediction"
+      note: F1 results for mobile manipulation auxiliary tasks.
+
+    - id: palme-pdf-table-5
+      source: pdf
+      page: 9
+      section: 6.5. General Visual-Language Tasks
+      table: Table 5
+      anchor: "Results on general visual-language tasks"
+      note: Generalist and task-specific VQA and captioning results.
+
+    - id: palme-pdf-retention
+      source: pdf
+      page: 9
+      section: 6.6. General Language Tasks
+      anchor: "less catastrophic forgetting of language capabilities"
+      note: Scale trend and Figure 6 summary.
+
+    - id: palme-pdf-discussion
+      source: pdf
+      page: 10
+      section: 7. Summary and Discussion
+      anchor: "Retaining language capabilities"
+      note: Frozen-LLM and scaling alternatives for language retention.
+
+    - id: palme-pdf-table-7
+      source: pdf
+      page: 16
+      section: B.1. TAMP
+      table: Table 7
+      anchor: "Success rates on TAMP environment for different input representations"
+      note: Full TAMP and out-of-distribution results.
+
+    - id: palme-pdf-table-8
+      source: pdf
+      page: 17
+      section: C. Natural Language Generation and Understanding Results
+      table: Table 8
+      anchor: "Full language evaluation task results"
+      note: NLU and NLG averages and relative deltas.
+
+    - id: palme-pdf-tables-9-10
+      source: pdf
+      page: 18
+      section: D. Additional Data for Affordance and Success Detection
+      table: Tables 9 and 10
+      anchor: "showing individual precision and recall scores"
+      note: Precision, recall, and F1 decomposition for Table 4.
+
+    - id: palme-tex-table-1
+      source: tex
+      file: main.tex
+      line_start: 444
+      line_end: 477
+      label: tab:damp_one_percent_data
+      anchor: "ViT-4B full mixture"
+      note: Raw Table 1 tabular and caption.
+
+    - id: palme-tex-table-2
+      source: tex
+      file: main.tex
+      line_start: 479
+      line_end: 534
+      label: tab:lt_sim
+      anchor: "Task 1"
+      note: Raw Table 2 multi-level task and demo headers plus task prompts.
+
+    - id: palme-tex-table-4
+      source: tex
+      file: main.tex
+      line_start: 581
+      line_end: 608
+      label: table:fractal_sd
+      anchor: "Failure det."
+      note: Raw Table 4 F1 rows.
+
+    - id: palme-tex-table-5
+      source: tex
+      file: main.tex
+      line_start: 642
+      line_end: 673
+      label: table:general-visual-language
+      anchor: "Generalist (one model)"
+      note: Raw Table 5 generalist and task-specific groups.
+
+    - id: palme-tex-table-8
+      source: tex
+      file: main.tex
+      line_start: 898
+      line_end: 935
+      label: tab:general-language
+      anchor: "NLG delta"
+      note: Raw Table 8 language-task averages and relative deltas.
+
+  claims:
+    - id: palme-claim-multimodal-token-injection
+      statement: >-
+        PaLM-E maps continuous observations into sequences of vectors with the
+        language-token embedding dimension and interleaves them with ordinary text
+        embeddings in a decoder-only PaLM prefix.
+      evidence_refs: [palme-pdf-architecture]
+      critical: true
+
+    - id: palme-claim-text-control-boundary
+      statement: >-
+        PaLM-E autoregressively produces text; embodied plans are translated into
+        actions by available low-level skill policies rather than direct motor control.
+      evidence_refs: [palme-pdf-control-loop]
+      critical: true
+
+    - id: palme-claim-cross-domain-transfer
+      statement: >-
+        In the one-percent TAMP setting, changing ViT-4B training from a single
+        robot to the full mixture raises p1 success from 30.6 to 74.1 and p2 from
+        32.9 to 74.6, supporting the paper's cross-domain transfer claim.
+      evidence_refs:
+        - palme-pdf-tamp-analysis
+        - palme-pdf-table-1
+        - palme-tex-table-1
+      critical: true
+
+    - id: palme-claim-osrt-data-efficiency
+      statement: >-
+        OSRT is the strongest Table 1 input representation for TAMP planning,
+        reporting 82.5 p1 and 76.2 p2 success without the large-scale VQA mixture.
+      evidence_refs:
+        - palme-pdf-table-1
+        - palme-tex-table-1
+      critical: true
+
+    - id: palme-claim-generalist-okvqa
+      statement: >-
+        The single generalist PaLM-E-562B checkpoint reports 66.1 on OK-VQA val,
+        higher than the other values listed in that Table 5 column.
+      evidence_refs:
+        - palme-pdf-table-5
+        - palme-tex-table-5
+      critical: true
+
+    - id: palme-claim-scale-retention
+      statement: >-
+        End-to-end multimodal training causes severe average NLG degradation at
+        PaLM-E-12B (-87.3% relative) but only -3.8% at PaLM-E-562B, so language
+        retention improves markedly with scale.
+      evidence_refs:
+        - palme-pdf-retention
+        - palme-pdf-table-8
+        - palme-tex-table-8
+      critical: true
+
+    - id: palme-claim-real-robot-scope
+      statement: >-
+        PaLM-E is shown performing long-horizon real-robot tasks under disturbances,
+        but this evidence is qualitative and is not accompanied by a success-rate study.
+      evidence_refs: [palme-pdf-real-robot]
+      critical: false
+
+  method_components:
+    - id: palme-method-modality-encoders
+      name: Modality-specific input encoders
+      role: Map continuous observations into sequences in the LLM embedding space.
+      inputs:
+        - robot state vectors
+        - images
+        - object-centric scene representations
+      outputs:
+        - continuous embedding tokens
+      variants:
+        - state MLP
+        - ViT and token learner
+        - OSRT with an MLP projector
+      evidence_refs: [palme-pdf-input-representations]
+      critical: true
+
+    - id: palme-method-multimodal-sentence
+      name: Multimodal sentence construction
+      role: Dynamically interleave observation embeddings with text-token embeddings.
+      inputs:
+        - encoded observation vectors
+        - tokenized text prompt
+      outputs:
+        - mixed embedding prefix
+      evidence_refs: [palme-pdf-architecture]
+      critical: true
+
+    - id: palme-method-decoder
+      name: Decoder-only PaLM backbone
+      role: Autoregressively generate textual answers, decisions, or plans.
+      inputs:
+        - multimodal embedding prefix
+      outputs:
+        - text tokens
+      evidence_refs: [palme-pdf-architecture]
+      critical: true
+
+    - id: palme-method-training
+      name: Multitask multimodal training
+      role: Train encoders and optionally the LLM over robot, vision-language, and language mixtures.
+      inputs:
+        - full or domain-specific training mixture
+        - pretrained PaLM and ViT variants
+      outputs:
+        - frozen-LLM or end-to-end PaLM-E checkpoint
+      evidence_refs:
+        - palme-pdf-training
+        - palme-pdf-cotraining
+      critical: true
+
+    - id: palme-method-control-loop
+      name: Language-mediated robot control loop
+      role: Execute generated short-horizon skill instructions and replan from new observations.
+      inputs:
+        - generated textual skill sequence
+        - low-level language-conditioned policies
+        - subsequent observations
+      outputs:
+        - executed robot actions
+        - updated multimodal context
+      evidence_refs: [palme-pdf-control-loop]
+      critical: true
+
+  experiment_records:
+    - id: palme-t1-state-no-pretrain-p1
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p1
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p1 training samples; LLM frozen except this non-pretrained variant
+      setting:
+        input_representation: state
+        object_centric: true
+        llm_pretrained: false
+        training_mixture: TAMP_only
+      metric: success_rate
+      value: 45.0
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, State, "LLM pre-train: no"]
+        column: [Planning, p1]
+      raw_row_anchor: "State | GT | no | p1 45.0"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: false
+
+    - id: palme-t1-state-pretrained-p1
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p1
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p1 training samples; frozen pretrained LLM
+      setting:
+        input_representation: state
+        object_centric: true
+        llm_pretrained: true
+        training_mixture: TAMP_only
+      metric: success_rate
+      value: 55.9
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, State, "LLM pre-train: yes"]
+        column: [Planning, p1]
+      raw_row_anchor: "State | GT | yes | p1 55.9"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: false
+
+    - id: palme-t1-vit4b-single-p1
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p1
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p1 training samples; frozen pretrained LLM
+      setting:
+        input_representation: ViT-4B_global
+        object_centric: false
+        llm_pretrained: true
+        training_mixture: single_robot
+      metric: success_rate
+      value: 30.6
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, "ViT-4B single robot"]
+        column: [Planning, p1]
+      raw_row_anchor: "ViT-4B single robot | p1 30.6"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: true
+
+    - id: palme-t1-vit4b-full-p1
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p1
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p1 training samples; frozen pretrained LLM
+      setting:
+        input_representation: ViT-4B_global
+        object_centric: false
+        llm_pretrained: true
+        training_mixture: full_mixture
+      metric: success_rate
+      value: 74.1
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, "ViT-4B full mixture"]
+        column: [Planning, p1]
+      raw_row_anchor: "ViT-4B full mixture | p1 74.1"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: true
+
+    - id: palme-t1-vit4b-single-p2
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p2
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p2 training samples; frozen pretrained LLM
+      setting:
+        input_representation: ViT-4B_global
+        object_centric: false
+        llm_pretrained: true
+        training_mixture: single_robot
+      metric: success_rate
+      value: 32.9
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, "ViT-4B single robot"]
+        column: [Planning, p2]
+      raw_row_anchor: "ViT-4B single robot | p2 32.9"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: true
+
+    - id: palme-t1-vit4b-full-p2
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p2
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p2 training samples; frozen pretrained LLM
+      setting:
+        input_representation: ViT-4B_global
+        object_centric: false
+        llm_pretrained: true
+        training_mixture: full_mixture
+      metric: success_rate
+      value: 74.6
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, "ViT-4B full mixture"]
+        column: [Planning, p2]
+      raw_row_anchor: "ViT-4B full mixture | p2 74.6"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: true
+
+    - id: palme-t1-osrt-p1
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p1
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p1 training samples; frozen pretrained LLM
+      setting:
+        input_representation: OSRT
+        object_centric: true
+        llm_pretrained: true
+        training_mixture: no_large_scale_VQA
+      metric: success_rate
+      value: 82.5
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, OSRT]
+        column: [Planning, p1]
+      raw_row_anchor: "OSRT | p1 82.5"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: true
+
+    - id: palme-t1-osrt-p2
+      method: PaLM-E-12B
+      method_role: proposed
+      task: TAMP planning p2
+      benchmark: TAMP environment
+      dataset: TAMP one-percent training subset
+      split: paper_evaluation_set
+      protocol: 320 p2 training samples; frozen pretrained LLM
+      setting:
+        input_representation: OSRT
+        object_centric: true
+        llm_pretrained: true
+        training_mixture: no_large_scale_VQA
+      metric: success_rate
+      value: 76.2
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: [PaLM-E, OSRT]
+        column: [Planning, p2]
+      raw_row_anchor: "OSRT | p2 76.2"
+      evidence_refs: [palme-pdf-table-1, palme-tex-table-1]
+      critical: true
+
+    - id: palme-t2-12b-single-task1-10
+      method: PaLM-E-12B
+      method_role: proposed
+      task: Language-Table Task 1
+      benchmark: Language-Table simulated planning
+      dataset: Interactive Language
+      split: validation
+      protocol: task-finetuned; 10 demonstrations; Task 1 validation accuracy
+      setting:
+        trained_on: single_robot
+        from_scratch: true
+        llm_vit_pretraining: false
+        llm_frozen: not_applicable
+        task_finetuned: true
+      metric: validation_accuracy
+      value: 20.0
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-12B", "Single robot", "from scratch", "task finetune"]
+        column: ["Task 1", "# Demos", "10"]
+      raw_row_anchor: "12B | Single robot | Task 1 | 10 | 20.0"
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: false
+
+    - id: palme-t2-12b-frozen-task2-40
+      method: PaLM-E-12B
+      method_role: proposed
+      task: Language-Table Task 2
+      benchmark: Language-Table simulated planning
+      dataset: Interactive Language
+      split: evaluation
+      protocol: no task finetuning; 40 demonstrations; 80 evaluation rollouts
+      setting:
+        trained_on: full_mixture
+        from_scratch: false
+        llm_vit_pretraining: true
+        llm_frozen: true
+        task_finetuned: false
+      metric: success_rate
+      value: 36.3
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-12B", "Full mixture", "LLM frozen", "no task finetune"]
+        column: ["Task 2", "# Demos", "40"]
+      raw_row_anchor: "12B | Full mixture | frozen | Task 2 | 40 | 36.3"
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: true
+
+    - id: palme-t2-12b-unfrozen-task2-40
+      method: PaLM-E-12B
+      method_role: proposed
+      task: Language-Table Task 2
+      benchmark: Language-Table simulated planning
+      dataset: Interactive Language
+      split: evaluation
+      protocol: no task finetuning; 40 demonstrations; 80 evaluation rollouts
+      setting:
+        trained_on: full_mixture
+        from_scratch: false
+        llm_vit_pretraining: true
+        llm_frozen: false
+        task_finetuned: false
+      metric: success_rate
+      value: 57.5
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-12B", "Full mixture", "LLM unfrozen", "no task finetune"]
+        column: ["Task 2", "# Demos", "40"]
+      raw_row_anchor: "12B | Full mixture | unfrozen | Task 2 | 40 | 57.5"
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: true
+
+    - id: palme-t2-12b-taskft-task2-20
+      method: PaLM-E-12B
+      method_role: proposed
+      task: Language-Table Task 2
+      benchmark: Language-Table simulated planning
+      dataset: Interactive Language
+      split: evaluation
+      protocol: task-finetuned; 20 demonstrations; 80 evaluation rollouts
+      setting:
+        trained_on: full_mixture
+        from_scratch: false
+        llm_vit_pretraining: true
+        llm_frozen: false
+        task_finetuned: true
+      metric: success_rate
+      value: 58.8
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-12B", "Full mixture", "LLM unfrozen", "task finetune"]
+        column: ["Task 2", "# Demos", "20"]
+      raw_row_anchor: "12B | Full mixture | task finetune | Task 2 | 20 | 58.8"
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: true
+
+    - id: palme-t2-84b-task1-40
+      method: PaLM-E-84B
+      method_role: proposed
+      task: Language-Table Task 1
+      benchmark: Language-Table simulated planning
+      dataset: Interactive Language
+      split: validation
+      protocol: no task finetuning; 40 demonstrations; Task 1 validation accuracy
+      setting:
+        trained_on: full_mixture
+        from_scratch: false
+        llm_vit_pretraining: true
+        llm_frozen: false
+        task_finetuned: false
+      metric: validation_accuracy
+      value: 90.0
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-84B", "Full mixture", "LLM unfrozen", "no task finetune"]
+        column: ["Task 1", "# Demos", "40"]
+      raw_row_anchor: "84B | Full mixture | Task 1 | 40 | 90.0"
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: true
+
+    - id: palme-t2-84b-task3-80
+      method: PaLM-E-84B
+      method_role: proposed
+      task: Language-Table Task 3
+      benchmark: Language-Table simulated planning
+      dataset: Interactive Language
+      split: evaluation
+      protocol: no task finetuning; 80 demonstrations; 80 evaluation rollouts
+      setting:
+        trained_on: full_mixture
+        from_scratch: false
+        llm_vit_pretraining: true
+        llm_frozen: false
+        task_finetuned: false
+      metric: success_rate
+      value: 64.4
+      unit: percent
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-84B", "Full mixture", "LLM unfrozen", "no task finetune"]
+        column: ["Task 3", "# Demos", "80"]
+      raw_row_anchor: "84B | Full mixture | Task 3 | 80 | 64.4"
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: true
+
+    - id: palme-t4-failure-full-frozen-f1
+      method: PaLM-E-12B
+      method_role: proposed
+      task: Failure detection
+      benchmark: Mobile manipulation environment
+      dataset: mobile robot manipulation data
+      split: not_reported
+      protocol: full-mixture training; pretrained ViT and frozen LLM
+      setting:
+        trained_on: full_mixture
+        llm_vit_pretraining: true
+        llm_frozen: true
+      metric: F1
+      value: 0.91
+      unit: fraction
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-12B", "Full mixture", "LLM frozen"]
+        column: ["Failure detection", "F1 score"]
+      raw_row_anchor: "Full mixture | frozen | Failure det. 0.91"
+      evidence_refs:
+        - palme-pdf-table-4
+        - palme-pdf-tables-9-10
+        - palme-tex-table-4
+      critical: false
+
+    - id: palme-t4-affordance-full-unfrozen-f1
+      method: PaLM-E-12B
+      method_role: proposed
+      task: Affordance prediction
+      benchmark: Mobile manipulation environment
+      dataset: mobile robot manipulation data
+      split: not_reported
+      protocol: full-mixture training; pretrained ViT and unfrozen LLM
+      setting:
+        trained_on: full_mixture
+        llm_vit_pretraining: true
+        llm_frozen: false
+      metric: F1
+      value: 0.91
+      unit: fraction
+      higher_is_better: true
+      result_kind: primary
+      header_path:
+        row: ["PaLM-E-12B", "Full mixture", "LLM unfrozen"]
+        column: ["Affordance prediction", "F1 score"]
+      raw_row_anchor: "Full mixture | unfrozen | Affordance 0.91"
+      evidence_refs:
+        - palme-pdf-table-4
+        - palme-pdf-tables-9-10
+        - palme-tex-table-4
+      critical: false
+
+    - id: palme-t5-562b-okvqa
+      method: PaLM-E-562B
+      method_role: proposed
+      task: Visual question answering
+      benchmark: OK-VQA
+      dataset: OK-VQA
+      split: validation
+      protocol: single generalist checkpoint
+      setting: {checkpoint_role: generalist_one_model}
+      metric: OK-VQA_score
+      value: 66.1
+      unit: score
+      higher_is_better: true
+      result_kind: auxiliary
+      header_path:
+        row: ["Generalist (one model)", "PaLM-E-562B"]
+        column: [OK-VQA, val]
+      raw_row_anchor: "PaLM-E-562B | OK-VQA val 66.1"
+      evidence_refs: [palme-pdf-table-5, palme-tex-table-5]
+      critical: true
+
+    - id: palme-t5-562b-vqav2
+      method: PaLM-E-562B
+      method_role: proposed
+      task: Visual question answering
+      benchmark: VQAv2
+      dataset: VQAv2
+      split: test-dev
+      protocol: single generalist checkpoint
+      setting: {checkpoint_role: generalist_one_model}
+      metric: VQAv2_score
+      value: 80.0
+      unit: score
+      higher_is_better: true
+      result_kind: auxiliary
+      header_path:
+        row: ["Generalist (one model)", "PaLM-E-562B"]
+        column: [VQAv2, test-dev]
+      raw_row_anchor: "PaLM-E-562B | VQAv2 test-dev 80.0"
+      evidence_refs: [palme-pdf-table-5, palme-tex-table-5]
+      critical: false
+
+    - id: palme-t8-12b-nlg-delta
+      method: PaLM-E-12B
+      method_role: proposed
+      task: General language retention
+      benchmark: 21-task language evaluation
+      dataset: NLG task aggregate
+      split: one-shot_evaluation
+      protocol: unfrozen multimodal training; relative to PaLM-8B
+      setting: {llm_frozen: false, composite_model_size: 12B}
+      metric: average_NLG_relative_delta
+      value: -87.3
+      unit: relative_percent
+      higher_is_better: true
+      result_kind: analysis
+      header_path:
+        row: ["NLG delta (%, relative)"]
+        column: ["PaLM-E-12B (unfrozen)"]
+      raw_row_anchor: "PaLM-E-12B | NLG delta -87.3%"
+      evidence_refs: [palme-pdf-table-8, palme-tex-table-8]
+      critical: true
+
+    - id: palme-t8-562b-nlg-delta
+      method: PaLM-E-562B
+      method_role: proposed
+      task: General language retention
+      benchmark: 21-task language evaluation
+      dataset: NLG task aggregate
+      split: one-shot_evaluation
+      protocol: unfrozen multimodal training; relative to PaLM-540B
+      setting: {llm_frozen: false, composite_model_size: 562B}
+      metric: average_NLG_relative_delta
+      value: -3.8
+      unit: relative_percent
+      higher_is_better: true
+      result_kind: analysis
+      header_path:
+        row: ["NLG delta (%, relative)"]
+        column: ["PaLM-E-562B (unfrozen)"]
+      raw_row_anchor: "PaLM-E-562B | NLG delta -3.8%"
+      evidence_refs: [palme-pdf-table-8, palme-tex-table-8]
+      critical: true
+
+  limitations:
+    - id: palme-limit-low-level-policy
+      statement: >-
+        PaLM-E emits textual decisions and assumes that available low-level policies
+        can execute the selected skills; it does not itself solve motor control.
+      provenance: author_stated
+      evidence_refs: [palme-pdf-control-loop]
+      critical: true
+
+    - id: palme-limit-language-forgetting
+      statement: >-
+        End-to-end multimodal training can severely degrade inherited language
+        capabilities at smaller scales; freezing the LLM or scaling up mitigates it.
+      provenance: author_stated
+      evidence_refs:
+        - palme-pdf-retention
+        - palme-pdf-discussion
+        - palme-pdf-table-8
+      critical: true
+
+    - id: palme-limit-real-robot-quantification
+      statement: >-
+        The long-horizon real-robot examples are qualitative and provide no episode
+        count, controlled baseline, or aggregate success rate.
+      provenance: annotator_inference
+      evidence_refs: [palme-pdf-real-robot]
+      critical: true
+
+    - id: palme-limit-compute-scale
+      statement: >-
+        The strongest generalist result uses a 562B-parameter composite model, while
+        the paper does not establish a deployment-quality compute or latency tradeoff.
+      provenance: annotator_inference
+      evidence_refs:
+        - palme-pdf-training
+        - palme-pdf-table-5
+      critical: false
+
+  ambiguities:
+    - id: palme-ambiguity-composite-size
+      risk: Treating PaLM-E-12B, 84B, or 562B as the parameter count of the LLM alone.
+      expected_disclosure: >-
+        State the composite convention: 8B PaLM plus 4B ViT gives PaLM-E-12B,
+        62B plus 22B gives 84B, and 540B plus 22B gives 562B.
+      evidence_refs: [palme-pdf-training]
+      critical: true
+
+    - id: palme-ambiguity-table-2-header
+      risk: >-
+        Shifting a Table 2 value across task groups or demo counts because the
+        three repeated numeric columns have a shared multi-level header.
+      expected_disclosure: >-
+        Preserve task, demo count, model size, training source, pretraining,
+        LLM-freezing, and task-finetuning fields for every selected cell.
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: true
+
+    - id: palme-ambiguity-dash
+      risk: Treating Table 1 or Table 2 dashes as zero-valued results.
+      expected_disclosure: Treat dashes as unreported or unevaluated unless the table explicitly prints 0.0.
+      evidence_refs:
+        - palme-pdf-table-1
+        - palme-pdf-table-2
+        - palme-tex-table-1
+        - palme-tex-table-2
+      critical: true
+
+    - id: palme-ambiguity-frozen-row
+      risk: Collapsing frozen and unfrozen PaLM-E rows that otherwise share model size and full-mixture training.
+      expected_disclosure: Preserve the LLM-frozen and task-finetuned flags as part of row identity.
+      evidence_refs: [palme-pdf-table-2, palme-tex-table-2]
+      critical: true
+
+    - id: palme-ambiguity-table-4-metric
+      risk: Reading Table 4 values as accuracy or confusing failure detection with affordance prediction.
+      expected_disclosure: >-
+        Identify both columns as F1 scores and use Tables 9 and 10 only when
+        decomposing them into precision and recall.
+      evidence_refs:
+        - palme-pdf-table-4
+        - palme-pdf-tables-9-10
+        - palme-tex-table-4
+      critical: true
+
+    - id: palme-ambiguity-generalist-checkpoint
+      risk: >-
+        Comparing the generalist PaLM-E-562B row with task-specific rows without
+        noting that the latter use separate finetuned checkpoints per task.
+      expected_disclosure: Preserve Table 5's generalist-versus-task-specific group distinction.
+      evidence_refs: [palme-pdf-table-5, palme-tex-table-5]
+      critical: true
+
+    - id: palme-ambiguity-real-robot
+      risk: Turning Figure 5 examples into a quantitative real-robot benchmark result.
+      expected_disclosure: Mark the real-robot evidence as qualitative demonstration only.
+      evidence_refs: [palme-pdf-real-robot]
+      critical: true
+
+    - id: palme-ambiguity-rounded-language-drop
+      risk: >-
+        Treating Figure 6's rounded 3.9% drop and Table 8's -3.8% NLG delta as
+        contradictory values or mixing NLU and NLG deltas.
+      expected_disclosure: Use Table 8 for exact values and identify the metric as average NLG relative delta.
+      evidence_refs:
+        - palme-pdf-retention
+        - palme-pdf-table-8
+        - palme-tex-table-8
+      critical: false
+
+  coverage:
+    required_areas:
+      - id: palme-area-problem-and-claims
+        pages: [1, 3]
+        description: Problem, embodied grounding objective, and stated contributions.
+        evidence_refs: [palme-pdf-abstract, palme-pdf-contributions]
+      - id: palme-area-architecture
+        pages: [4, 5]
+        description: Token injection, output boundary, and modality encoders.
+        evidence_refs:
+          - palme-pdf-architecture
+          - palme-pdf-control-loop
+          - palme-pdf-input-representations
+      - id: palme-area-training
+        pages: [5, 6]
+        description: Model-size convention, freezing, full mixture, and experiment design.
+        evidence_refs:
+          - palme-pdf-training
+          - palme-pdf-cotraining
+      - id: palme-area-embodied-results
+        pages: [7, 8, 9]
+        description: TAMP, Language-Table, mobile manipulation, and real-robot evidence.
+        evidence_refs:
+          - palme-pdf-tamp-analysis
+          - palme-pdf-table-1
+          - palme-pdf-real-robot
+          - palme-pdf-table-2
+          - palme-pdf-table-4
+      - id: palme-area-generalist-and-retention
+        pages: [9, 10, 17]
+        description: Visual-language results, language retention, and discussion.
+        evidence_refs:
+          - palme-pdf-table-5
+          - palme-pdf-retention
+          - palme-pdf-discussion
+          - palme-pdf-table-8
+      - id: palme-area-appendix-validation
+        pages: [16, 17, 18]
+        description: Full TAMP, language, and precision/recall appendix tables.
+        evidence_refs:
+          - palme-pdf-table-7
+          - palme-pdf-table-8
+          - palme-pdf-tables-9-10
+      - id: palme-area-tex-resolution
+        files: [main.tex]
+        description: Raw table spans used to resolve multi-level headers.
+        evidence_refs:
+          - palme-tex-table-1
+          - palme-tex-table-2
+          - palme-tex-table-4
+          - palme-tex-table-5
+          - palme-tex-table-8
+    optional_areas:
+      - pages: [11, 12, 13]
+        description: References.
+      - pages: [14, 15]
+        description: Full data-mixture inventory and environment details beyond selected records.

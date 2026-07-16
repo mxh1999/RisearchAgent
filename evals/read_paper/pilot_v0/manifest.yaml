@@ -1,0 +1,43 @@
+schema_version: read-paper-corpus/v1
+corpus_id: read-paper-pilot-v0
+status: draft
+rubric: ../rubric.yaml
+page_numbering: pdf_1_indexed
+description: >-
+  Two-paper pilot used to calibrate the human annotation schema before expanding
+  to the reviewed eight-paper corpus. Draft cases are candidate references and
+  must not be used for acceptance gates until a human reviewer marks them reviewed.
+
+common_task:
+  skill: read-paper
+  mode: standard
+  instruction: >-
+    Read the supplied paper and produce an evidence-backed account of its problem,
+    method, primary claims, main experiment settings and results, limitations,
+    unresolved ambiguities, and source coverage. Important claims and experiment
+    records must point to independently resolvable source evidence.
+  output_requirements:
+    - identity_and_source_inventory
+    - one_sentence_takeaway
+    - problem_and_motivation
+    - method_decomposition
+    - primary_claims
+    - primary_experiment_settings_and_results
+    - limitations_and_critical_assessment
+    - unresolved_ambiguities
+    - coverage_report
+
+annotation_policy:
+  target_experiment_cells_per_paper: 10-20
+  exhaustive_baseline_transcription: false
+  model_generated_reference_is_gold: false
+  review_transition: draft_to_reviewed_requires_human_verification
+  evidence_policy: >-
+    Parser output may be used only as a locator. Every accepted reference item must
+    be checked against the frozen PDF page or raw TeX source span.
+
+cases:
+  - case_id: 2312.03275v1-standard
+    file: cases/2312.03275v1.yaml
+  - case_id: 2303.03378v1-standard
+    file: cases/2303.03378v1.yaml

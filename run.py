@@ -7,7 +7,94 @@ import logging
 import sys
 
 from src.config import load_config
-from src.pipeline.orchestrator import PipelineOrchestrator
+
+
+class PaperReaderArgumentParser(argparse.ArgumentParser):
+    def parse_args(self, args=None, namespace=None):
+        raw_args = sys.argv[1:] if args is None else list(args)
+        parsed = super().parse_args(args, namespace)
+        if (
+            getattr(parsed, "command", None) == "survey"
+            and getattr(parsed, "survey_command", None) == "refine"
+        ):
+            has_topic_text = bool(getattr(parsed, "topic_text", None))
+            has_from_note = getattr(parsed, "from_note", None) is not None
+            if has_topic_text == has_from_note:
+                self.error(
+                    "survey refine requires exactly one of topic_text or --from-note"
+                )
+        if getattr(parsed, "command", None) == "read":
+            staged = bool(getattr(parsed, "staged", False))
+            source_count = sum(
+                bool(value)
+                for value in (
+                    getattr(parsed, "pdf", None),
+                    getattr(parsed, "text_file", None),
+                )
+            )
+            if staged:
+                if getattr(parsed, "arxiv_id", None):
+                    self.error("read --staged does not support positional arxiv_id")
+                if source_count != 1:
+                    self.error("read --staged requires exactly one of --pdf or --text-file")
+                if not getattr(parsed, "paper_id", None):
+                    self.error("read --staged requires --paper-id")
+                if not getattr(parsed, "title", None):
+                    self.error("read --staged requires --title")
+            else:
+                staged_only_flags = {
+                    "--pdf": getattr(parsed, "pdf", None),
+                    "--text-file": getattr(parsed, "text_file", None),
+                    "--paper-id": getattr(parsed, "paper_id", None),
+                    "--title": getattr(parsed, "title", None),
+                    "--topic": getattr(parsed, "topic", None),
+                    "--output-root": getattr(parsed, "output_root", None),
+                }
+                supplied_flags = [
+                    flag for flag, value in staged_only_flags.items() if value is not None
+                ]
+                if supplied_flags:
+                    self.error(
+                        "read staged-only flags require --staged: "
+                        + ", ".join(supplied_flags)
+                    )
+                if not getattr(parsed, "arxiv_id", None):
+                    self.error("read requires arxiv_id unless --staged is set")
+        if (
+            getattr(parsed, "command", None) == "topic"
+            and getattr(parsed, "topic_command", None) == "update"
+            and getattr(parsed, "skip_survey", False)
+            and getattr(parsed, "skip_sota", False)
+        ):
+            self.error("topic update cannot use both --skip-survey and --skip-sota")
+        if (
+            getattr(parsed, "command", None) == "topic"
+            and getattr(parsed, "topic_command", None) == "download"
+            and getattr(parsed, "all", False)
+            and any(arg == "--limit" or arg.startswith("--limit=") for arg in raw_args)
+        ):
+            self.error("topic download cannot use both --all and --limit")
+        return parsed
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
+
+
+def _threshold(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0 or parsed > 1.0:
+        raise argparse.ArgumentTypeError("must be in (0, 1]")
+    return parsed
+
+
+def create_orchestrator(config):
+    from src.pipeline.orchestrator import PipelineOrchestrator
+
+    return PipelineOrchestrator(config)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -21,7 +108,7 @@ def setup_logging(verbose: bool = False) -> None:
 
 async def cmd_crawl(config):
     """Stage 1: Crawl ArXiv papers."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     await orch.db.initialize()
     count = await orch.stage_crawl()
     print(f"\nCrawled {count} papers.")
@@ -31,7 +118,7 @@ async def cmd_crawl(config):
 
 async def cmd_filter(config):
     """Stage 2: Filter papers by relevance."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     await orch.db.initialize()
     count = await orch.stage_filter()
     print(f"\nFiltered {count} papers.")
@@ -41,7 +128,7 @@ async def cmd_filter(config):
 
 async def cmd_read(config, arxiv_id: str):
     """Stage 3: Deep-read a specific paper."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     result = await orch.read_single_paper(arxiv_id)
 
     if not result:
@@ -98,7 +185,7 @@ async def cmd_read(config, arxiv_id: str):
 
 async def cmd_pipeline(config):
     """Run full 5-stage pipeline."""
-    orch = PipelineOrchestrator(config)
+    orch = create_orchestrator(config)
     stats = await orch.run_all()
     print(f"\nPipeline complete:")
     print(f"  Crawled:      {stats['crawled']}")
@@ -254,8 +341,8 @@ async def cmd_stats(config):
     print(f"  SOTA updates:     {stats['sota_updates']}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
+def build_parser() -> argparse.ArgumentParser:
+    parser = PaperReaderArgumentParser(
         description="RisearchAgent - ArXiv paper analysis pipeline"
     )
     parser.add_argument(
@@ -268,11 +355,77 @@ def main():
     subparsers.add_parser("crawl", help="Crawl ArXiv papers")
     subparsers.add_parser("filter", help="Filter papers by relevance")
 
+    pdf_parser = subparsers.add_parser("pdf", help="PDF inspection utilities")
+    pdf_subparsers = pdf_parser.add_subparsers(
+        dest="pdf_command",
+        help="PDF command to run",
+    )
+    pdf_subparsers.required = True
+    pdf_extract_parser = pdf_subparsers.add_parser(
+        "extract",
+        help="Extract normalized per-page text from a PDF",
+    )
+    pdf_extract_parser.add_argument(
+        "--pdf",
+        required=True,
+        help="Local PDF source path",
+    )
+    pdf_extract_parser.add_argument(
+        "--output",
+        help="Output text path. Prints to stdout when omitted.",
+    )
+    pdf_extract_parser.add_argument(
+        "--max-pages",
+        type=_positive_int,
+        help="Maximum number of pages to extract",
+    )
+
     read_parser = subparsers.add_parser("read", help="Deep-read a specific paper")
-    read_parser.add_argument("arxiv_id", help="ArXiv paper ID (e.g. 2401.12345)")
+    read_parser.add_argument(
+        "arxiv_id",
+        nargs="?",
+        help="ArXiv paper ID (e.g. 2401.12345)",
+    )
+    read_parser.add_argument(
+        "--staged",
+        action="store_true",
+        help="Read a local PDF or text file with staged extraction",
+    )
+    source_group = read_parser.add_mutually_exclusive_group()
+    source_group.add_argument("--pdf", help="Local PDF source path")
+    source_group.add_argument("--text-file", help="Local text source path")
+    read_parser.add_argument("--paper-id", help="Stable output paper ID")
+    read_parser.add_argument("--title", help="Paper title")
+    read_parser.add_argument("--topic", help="Topic YAML path")
+    read_parser.add_argument(
+        "--output-root",
+        help="Output root for staged readings without --topic",
+    )
 
     subparsers.add_parser("pipeline", help="Run full 5-stage pipeline")
-    subparsers.add_parser("sota", help="Show SOTA tracking table")
+    sota_parser = subparsers.add_parser("sota", help="Show or update SOTA tracking")
+    sota_subparsers = sota_parser.add_subparsers(
+        dest="sota_command",
+        help="SOTA command to run",
+    )
+    update_sota_parser = sota_subparsers.add_parser(
+        "update",
+        help="Update topic-scoped SOTA artifacts from staged reading packages",
+    )
+    update_sota_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    update_sota_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+    update_sota_parser.add_argument(
+        "--no-llm-normalize",
+        action="store_true",
+        help="Use conservative exact setting grouping without LLM canonicalization",
+    )
     subparsers.add_parser("stats", help="Show database statistics")
 
     export_parser = subparsers.add_parser("export", help="Export knowledge data to JSON")
@@ -296,6 +449,255 @@ def main():
         help="Refine existing profile instead of starting fresh",
     )
 
+    survey_parser = subparsers.add_parser("survey", help="Survey topic workflows")
+    survey_subparsers = survey_parser.add_subparsers(
+        dest="survey_command",
+        help="Survey command to run",
+    )
+    survey_subparsers.required = True
+
+    refine_parser = survey_subparsers.add_parser(
+        "refine",
+        help="Refine a survey topic from text or a note",
+    )
+    refine_parser.add_argument(
+        "topic_text",
+        nargs="?",
+        help="Free-form topic text to refine",
+    )
+    refine_parser.add_argument(
+        "--from-note",
+        help="Path to a note file to refine",
+    )
+    refine_parser.add_argument(
+        "--topics-root",
+        default="data/topics",
+        help="Topic artifact root directory (default: data/topics)",
+    )
+
+    synthesize_parser = survey_subparsers.add_parser(
+        "synthesize",
+        help="Synthesize survey artifacts from staged reading packages",
+    )
+    synthesize_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    synthesize_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+
+    topic_parser = subparsers.add_parser("topic", help="Topic-level workflows")
+    topic_subparsers = topic_parser.add_subparsers(
+        dest="topic_command",
+        help="Topic command to run",
+    )
+    topic_subparsers.required = True
+    topic_ingest_parser = topic_subparsers.add_parser(
+        "ingest",
+        help="Ingest papers from a manifest into one topic reading set",
+    )
+    topic_ingest_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_ingest_parser.add_argument(
+        "--manifest",
+        required=True,
+        help="Path to topic ingest manifest YAML",
+    )
+    topic_ingest_parser.add_argument(
+        "--readings-dir",
+        help="Directory for staged reading package JSON files",
+    )
+    topic_ingest_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-read papers even when their package JSON already exists",
+    )
+    topic_ingest_parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update topic survey and SOTA artifacts after ingest",
+    )
+    topic_ingest_parser.add_argument(
+        "--no-llm-normalize",
+        action="store_true",
+        help="Use conservative exact SOTA setting grouping without LLM canonicalization",
+    )
+    topic_screen_parser = topic_subparsers.add_parser(
+        "screen",
+        help="Screen discovered candidates for topic relevance before download",
+    )
+    topic_screen_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_screen_parser.add_argument(
+        "--candidates",
+        help="Path to discovery_candidates.json",
+    )
+    topic_screen_parser.add_argument(
+        "--threshold",
+        type=_threshold,
+        default=0.6,
+        help="Minimum relevance score for accepted candidates",
+    )
+    topic_screen_parser.add_argument(
+        "--limit",
+        type=_positive_int,
+        help="Maximum number of candidates to screen",
+    )
+    topic_screen_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write only the screening report without mutating discovery artifacts",
+    )
+    topic_screen_parser.add_argument(
+        "--model",
+        help="Override the configured filter model",
+    )
+    topic_validate_parser = topic_subparsers.add_parser(
+        "validate",
+        help="Validate read papers for topic relevance before update",
+    )
+    topic_validate_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_validate_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+    topic_validate_parser.add_argument(
+        "--threshold",
+        type=_threshold,
+        default=0.6,
+        help="Minimum relevance score for included reading packages",
+    )
+    topic_validate_parser.add_argument(
+        "--limit",
+        type=_positive_int,
+        help="Maximum number of reading packages to validate",
+    )
+    topic_validate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write only the validation report without changing update filtering state",
+    )
+    topic_validate_parser.add_argument(
+        "--model",
+        help="Override the configured filter model",
+    )
+    topic_download_parser = topic_subparsers.add_parser(
+        "download",
+        help="Download discovered topic candidate PDFs and write an ingest manifest",
+    )
+    topic_download_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_download_parser.add_argument(
+        "--candidates",
+        help="Path to discovery_candidates.json",
+    )
+    topic_download_parser.add_argument(
+        "--manifest",
+        help="Output path for ingest_manifest.yaml",
+    )
+    topic_download_parser.add_argument(
+        "--limit",
+        type=_positive_int,
+        default=10,
+        help="Maximum candidate PDFs to materialize",
+    )
+    topic_download_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Download all eligible candidates instead of applying --limit",
+    )
+    topic_download_parser.add_argument(
+        "--include-existing",
+        action="store_true",
+        help="Include papers already present in the topic papers directory",
+    )
+    topic_download_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download PDFs even when the target file already exists",
+    )
+    topic_discover_parser = topic_subparsers.add_parser(
+        "discover",
+        help="Discover candidate papers for one topic from configured search queries",
+    )
+    topic_discover_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_discover_parser.add_argument(
+        "--max-results-per-query",
+        type=_positive_int,
+        default=20,
+        help="Maximum arXiv results to fetch for each topic search query",
+    )
+    topic_discover_parser.add_argument(
+        "--sort",
+        choices=["submitted", "relevance"],
+        default="submitted",
+        help="arXiv result sort order",
+    )
+    topic_discover_parser.add_argument(
+        "--days-lookback",
+        type=_positive_int,
+        default=365,
+        help="Only keep papers published within this many days",
+    )
+    topic_discover_parser.add_argument(
+        "--include-existing",
+        action="store_true",
+        help="Include papers already present in the topic papers directory",
+    )
+    topic_update_parser = topic_subparsers.add_parser(
+        "update",
+        help="Update survey and SOTA artifacts for one topic",
+    )
+    topic_update_parser.add_argument(
+        "--topic",
+        required=True,
+        help="Path to topic.yaml",
+    )
+    topic_update_parser.add_argument(
+        "--readings-dir",
+        help="Directory containing staged reading package JSON files",
+    )
+    topic_update_parser.add_argument(
+        "--skip-survey",
+        action="store_true",
+        help="Skip survey synthesis artifacts",
+    )
+    topic_update_parser.add_argument(
+        "--skip-sota",
+        action="store_true",
+        help="Skip SOTA artifact update",
+    )
+    topic_update_parser.add_argument(
+        "--no-llm-normalize",
+        action="store_true",
+        help="Use conservative exact SOTA setting grouping without LLM canonicalization",
+    )
+
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
     setup_logging(args.verbose)
 
@@ -305,6 +707,36 @@ def main():
 
     if args.command == "onboard":
         cmd_onboard(args)
+        return
+
+    if args.command == "survey":
+        from src.survey.cli import run_survey_command
+
+        run_survey_command(args)
+        return
+
+    if args.command == "topic":
+        from src.survey.topic_cli import run_topic_command
+
+        run_topic_command(args)
+        return
+
+    if args.command == "pdf":
+        from src.reader.pdf_cli import run_pdf_command
+
+        run_pdf_command(args)
+        return
+
+    if args.command == "sota" and getattr(args, "sota_command", None) == "update":
+        from src.survey.sota_cli import cmd_sota_update
+
+        asyncio.run(cmd_sota_update(args))
+        return
+
+    if args.command == "read" and getattr(args, "staged", False):
+        from src.reader.staged_cli import run_read_staged
+
+        run_read_staged(args)
         return
 
     config = load_config(args.config)

@@ -1,0 +1,28 @@
+topics:
+- name: Example Topic
+  query: (cat:cs.RO OR cat:cs.AI OR cat:cs.CV) AND ("embodied navigation" AND "memory")
+  categories:
+  - cs.RO
+  - cs.AI
+  - cs.CV
+  research_profile: >
+    Describe your research interests here. This profile is used by relevance
+    filters to decide whether papers are worth reading.
+llm:
+  response_format: gpt
+  base_url: https://api.ikuncode.cc
+  api_key_env: RISEARCHAGENT_API_KEY
+  filter_model: gpt-5.6-sol
+  reader_model: gpt-5.6-sol
+  max_concurrent: 5
+  temperature: 0.3
+scraper:
+  max_results_per_topic: 20
+  delay_seconds: 3.0
+  days_lookback: 30
+filter:
+  relevance_threshold: 6
+  borderline_min: 4
+db_path: data/papers.db
+pdf_dir: data/pdfs
+sota_dir: data/sota
